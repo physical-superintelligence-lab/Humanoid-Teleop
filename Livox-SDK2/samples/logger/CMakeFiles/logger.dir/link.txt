@@ -1,0 +1,1 @@
+/nix/store/4ijy8jbsiqmj37avrk83gn2m903486mr-gcc-wrapper-14-20241116/bin/g++ -rdynamic -Wl,--dependency-file=CMakeFiles/logger.dir/link.d CMakeFiles/logger.dir/main.cpp.o -o logger  -llivox_lidar_sdk_static

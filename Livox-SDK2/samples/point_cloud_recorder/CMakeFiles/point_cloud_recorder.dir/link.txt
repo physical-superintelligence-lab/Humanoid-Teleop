@@ -1,0 +1,1 @@
+/nix/store/4ijy8jbsiqmj37avrk83gn2m903486mr-gcc-wrapper-14-20241116/bin/g++ -rdynamic -Wl,--dependency-file=CMakeFiles/point_cloud_recorder.dir/link.d CMakeFiles/point_cloud_recorder.dir/main.cpp.o -o point_cloud_recorder  -llivox_lidar_sdk_static
