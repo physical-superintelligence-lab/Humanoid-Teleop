@@ -1,15 +1,17 @@
 # Introduction
 
-This repository contains USC GVL's custom Humanoid data collection pipeline, along with the re-engineering of Unitree's teleoperation of the G1 humanoid robots. For teleoperating and collecting data using the H1, please checkout the H1 branch.
+This repository contains USC GVL's custom Humanoid data collection pipeline, along with the re-engineering of Unitree's teleoperation of the G1 humanoid robots. For teleoperating and collecting data using the H1, please check out the H1 branch.
 
 # Environment Requirements
+
+We use micromamba instead of conda for its lightweight.
 
 ## Inverse Kinematics Libraries (Host only)
 
 ```bash
-conda create -n tv python=3.8
-conda activate tv
-conda install pinocchio -c conda-forge
+micromamba create -n tv python=3.8
+micromamba activate tv
+micromamba install pinocchio -c conda-forge
 pip install meshcat
 pip install casadi
 ```
@@ -21,6 +23,9 @@ git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python
 pip install -e .
 ```
+
+> [!NOTE]
+> You need to fix the dds issue by manually removing any code relevant to \_\_domain\_\_
 
 ## TeleVision and Apple Vision Pro configuration (Host only)
 
@@ -80,8 +85,8 @@ settings > Apps > Safari > Advanced > Feature Flags > Enable WebXR Related Featu
 On G1's PC, install the image server's requirements
 
 ```bash
-conda create -n vision python=3.8
-conda activate vision
+micromamba create -n vision python=3.8
+micromamba activate vision
 pip install pyrealsense2 opencv-python zmq numpy
 ```
 
@@ -103,11 +108,11 @@ mv point_cloud_recordedr/point_cloud_recorder ../../avp_teleop/teleop
 Copy `realsense_server.py` in the `teleop/image_server` directory to the PC of Unitree G_1, and execute the following command **in the PC**:
 
 ```bash
-conda activate vision
+micromamba activate vision
 python realsense_server.py
 ```
 
-## Data collection metadata preperation
+## Data collection metadata preparation
 
 1. Write down the task information in a json file inside `teleop/task_defs` directory
 2. In the `teleop/` directory, run `python taskcreator.py` to generate the task metadata. Take a look at `teleop/task_defs/example.json` for an example task's json format.
@@ -117,7 +122,7 @@ python realsense_server.py
 > Warning : All persons must maintain an adequate safety distance from the robot to avoid danger!
 
 1. Connect your host computer to G1. Then, set up your local IP address to 192.168.123.123 with netmask 255.255.255.0 on G1's network interface.
-2. Connect both your computer and AVP to the same local router wifi in which you setup your cert with.
+2. Connect both your computer and AVP to the same local router wifi in which you set up your cert with.
 3. Open robot and set to sports mode (using remote control by pressing L1 + A, then L1 + UP, and lastly R1 + X when the G1 is gently touching the ground).
 4. On G1 PC: start the image server as above.
 5. On host computer: run
