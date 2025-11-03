@@ -9,7 +9,7 @@ import yaml
 from robot_control.dex_retargeting.retargeting_config import RetargetingConfig
 
 from constants_vuer import tip_indices
-from teleop.robot_control.hand_retargeting import HandRetargeting, HandType
+from robot_control.hand_retargeting import HandRetargeting, HandType
 from TeleVision import OpenTeleVision
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -188,11 +188,14 @@ class VuerTeleop:
 
         self.img_shape = (self.resolution_cropped[0], 2 * self.resolution_cropped[1], 3)
         self.img_height, self.img_width = self.resolution_cropped[:2]
-
-        # self.shm = shared_memory.SharedMemory(
-        #     create=True, size=np.prod(self.img_shape) * np.uint8().itemsize
-        # )
-        self.shm = shared_memory.SharedMemory(name=img_shm_name)
+        
+        if img_shm_name is None:
+            self.shm = shared_memory.SharedMemory(
+                create=True, size=np.prod(self.img_shape) * np.uint8().itemsize
+            )
+        else:
+            self.shm = shared_memory.SharedMemory(name=img_shm_name)
+            
         self.img_array = np.ndarray(
             (self.img_shape[0], self.img_shape[1], 3),
             dtype=np.uint8,
@@ -213,11 +216,14 @@ class VuerTeleop:
         self.left_retargeting = left_retargeting_config.build()
         self.right_retargeting = right_retargeting_config.build()
 
-    def step(self):
+    def step(self, full_head=False):
         head_mat, left_wrist_mat, right_wrist_mat, left_hand_mat, right_hand_mat = (
             self.processor.process(self.tv)
         )
-        head_rmat = head_mat[:3, :3]
+        if full_head:
+            head_rmat = head_mat
+        else:
+            head_rmat = head_mat[:3, :3]
 
         left_wrist_mat[2, 3] += 0.55
         right_wrist_mat[2, 3] += 0.55

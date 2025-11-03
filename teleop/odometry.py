@@ -1,7 +1,7 @@
 import time
 from unitree_sdk2py.core.channel import (ChannelFactoryInitialize,
                                          ChannelPublisher, ChannelSubscriber)
-from unitree_sdk2py.idl.unitree_go.msg.dds_._SportModeState_ import SportModeState_
+from unitree_sdk2py.idl.unitree_go.msg.dds.SportModeState_ import SportModeState_
 
 TOPIC_SPORT_STATE = "rt/odommodestate"       # High frequency
 TOPIC_SPORT_LF_STATE = "rt/lf/odommodestate" # Low frequency

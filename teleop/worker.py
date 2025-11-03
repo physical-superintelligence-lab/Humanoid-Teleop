@@ -70,14 +70,14 @@ class TeleoperatorProcess:
         while not self.kill_event.is_set():
             # logger.debug("Teleoperator: starting to step")
             head_rmat, left_pose, right_pose, left_qpos, right_qpos = (
-                self.teleoperator.step()
+                self.teleoperator.step(full_head=True)
             )
             # logger.debug("Teleoperator: finished stepping")
-            self.teleop_shm_array[0:9] = head_rmat.flatten()
-            self.teleop_shm_array[9:25] = left_pose.flatten()
-            self.teleop_shm_array[25:41] = right_pose.flatten()
-            self.teleop_shm_array[41:48] = np.array(left_qpos).flatten()
-            self.teleop_shm_array[48:55] = np.array(right_qpos).flatten()
+            self.teleop_shm_array[0:16] = head_rmat.flatten()
+            self.teleop_shm_array[16:32] = left_pose.flatten()
+            self.teleop_shm_array[32:48] = right_pose.flatten()
+            self.teleop_shm_array[48:55] = np.array(left_qpos).flatten()
+            self.teleop_shm_array[55:62] = np.array(right_qpos).flatten()
             time.sleep(0.01)
 
     def run(self):

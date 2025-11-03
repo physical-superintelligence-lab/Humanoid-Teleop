@@ -9,7 +9,8 @@ from pathlib import Path
 import numpy as np
 
 from constants import *
-from master import RobotTaskmaster
+from master_whole_body import RobotTaskmaster
+# from master import RobotTaskmaster
 from progress import ProgressTracker
 from utils.logger import logger
 from worker import RobotDataWorker
@@ -78,10 +79,10 @@ class TeleopManager:
         )
 
         self.teleop_shm = shared_memory.SharedMemory(
-            create=True, size=55 * np.dtype(np.float64).itemsize
+            create=True, size=62 * np.dtype(np.float64).itemsize
         )
         self.teleop_shm_array = np.ndarray(
-            (55,), dtype=np.float64, buffer=self.teleop_shm.buf
+            (62,), dtype=np.float64, buffer=self.teleop_shm.buf
         )
 
         def run_taskmaster():

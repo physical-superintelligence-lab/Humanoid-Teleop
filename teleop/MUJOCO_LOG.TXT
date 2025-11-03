@@ -1,0 +1,51 @@
+Sat Oct 25 17:29:01 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 0.1500.
+
+Sat Oct 25 17:37:49 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 30. The simulation is unstable. Time = 0.1940.
+
+Sat Oct 25 17:42:42 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 0.2040.
+
+Sat Oct 25 17:47:26 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 0.1820.
+
+Sat Oct 25 17:54:58 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 44. The simulation is unstable. Time = 0.1420.
+
+Sat Oct 25 18:09:47 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 1. The simulation is unstable. Time = 0.3400.
+
+Sat Oct 25 18:15:03 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 33. The simulation is unstable. Time = 0.0720.
+
+Sat Oct 25 18:20:36 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 0.0760.
+
+Sat Oct 25 18:20:57 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 30. The simulation is unstable. Time = 0.0720.
+
+Sat Oct 25 18:42:25 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 10. The simulation is unstable. Time = 0.0760.
+
+Sat Oct 25 18:43:20 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 48. The simulation is unstable. Time = 0.1400.
+
+Sat Oct 25 18:54:29 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 3. The simulation is unstable. Time = 0.1480.
+
+Sat Oct 25 19:16:15 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 33. The simulation is unstable. Time = 0.2100.
+
+Sat Oct 25 19:16:37 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 3. The simulation is unstable. Time = 0.1480.
+
+Sat Oct 25 19:23:06 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 0.1380.
+
+Sat Oct 25 19:25:02 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 30. The simulation is unstable. Time = 0.4240.
+
+Sat Oct 25 19:47:55 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 18. The simulation is unstable. Time = 0.3520.
+
