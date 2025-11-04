@@ -73,6 +73,7 @@ class RobotTaskmaster:
         # Controller parameters
         self.vx = 0.0
         self.vy = 0.0
+        self.yaw = 0.0
         self.vyaw = 0.0
 
         # AMO parameters
@@ -270,7 +271,7 @@ class RobotTaskmaster:
 
     def get_ik_observation(self):
         rpy = self.rpy
-        self.target_yaw = self.vyaw
+        self.target_yaw = self.yaw
         dyaw = rpy[2] - self.target_yaw
         dyaw = np.remainder(dyaw + np.pi, 2 * np.pi) - np.pi
         if self._in_place_stand_flag:
@@ -369,8 +370,10 @@ class RobotTaskmaster:
         self.vy = -0.5 * lx
 
         self.vyaw = -rx
+        dt = 1.0 / 30.0
+        self.yaw += self.vyaw * dt
 
-        print("self.vyaw:", self.vyaw)
+        # print("self.yaw:", self.yaw)
 
         # print("in_place_stand_flag:", self._in_place_stand_flag)
 

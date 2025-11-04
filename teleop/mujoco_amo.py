@@ -362,7 +362,7 @@ class HumanoidEnv:
         obs_demo[:self._n_demo_dof] = obs_dof_pos[15:]
         obs_demo[self._n_demo_dof] = self.viewer.commands[0]
         obs_demo[self._n_demo_dof+1] = self.viewer.commands[2]
-        self._in_place_stand_flag = (np.abs(self.viewer.commands[0]) < 0.1) and (np.abs(self.viewer.commands[2]) < 0.1)
+        self._in_place_stand_flag = (np.abs(self.viewer.commands[0]) < 0.1) and (np.abs(self.viewer.commands[1]) < 0.1) and (np.abs(self.viewer.commands[2]) < 0.1)
         # obs_demo[self._n_demo_dof+3] = self.viewer.commands[4]
         # obs_demo[self._n_demo_dof+4] = self.viewer.commands[5]
         # obs_demo[self._n_demo_dof+5] = self.viewer.commands[6]
