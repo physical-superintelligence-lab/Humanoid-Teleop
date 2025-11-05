@@ -516,7 +516,7 @@ class RobotTaskmaster:
 
                     # print("pd_target:", pd_target)
 
-                    pd_tauff = np.zeros(29)
+                    # pd_tauff = np.zeros(29)
 
                     ok = self.safelySetMotor(pd_target, last_pd_target, pd_tauff)
                     if ok:
@@ -609,6 +609,8 @@ class RobotTaskmaster:
                 head_rmat,
                 left_pose,
                 right_pose,
+                new_h,
+                new_rpy,
             )
         # self.arm_ctrl.gradually_set_weight_to_0()
 

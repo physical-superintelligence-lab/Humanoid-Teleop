@@ -83,6 +83,8 @@ class IKDataWriter:
         head_rmat,
         left_pose,
         right_pose,
+        height,
+        rpy,
     ):
         entry = {
             "right_angles": right_angles.tolist(),
@@ -94,6 +96,8 @@ class IKDataWriter:
             "head_rmat": head_rmat.tolist(),
             "left_pose": left_pose.tolist(),
             "right_pose": right_pose.tolist(),
+            "torso_height": height,
+            "torso_rpy": rpy.tolist(),
         }
         self.async_writer.write(json.dumps(entry))
 
