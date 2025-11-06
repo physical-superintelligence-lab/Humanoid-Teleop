@@ -45,7 +45,7 @@ def quatToEuler(quat):
 
 
 if __name__ == "__main__":
-    merged_file_path = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_15/data.json"
+    merged_file_path = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_10/data.json"
     with open(merged_file_path, "r") as f:
         data_list = json.load(f)
 
@@ -82,9 +82,11 @@ if __name__ == "__main__":
             arm_poseList = data_list[i]["states"]["arm_state"]
             current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
             # rpy = data_list[i]["states"]["imu"]["rpy"]
-            quat = data_list[i]["states"]["imu"]["quaternion"]
-            rpy = quatToEuler(quat)
-            master.torso_height = data_list[i]["states"]["odometry"]["position"][2]
+            # quat = data_list[i]["states"]["imu"]["quaternion"]
+            # rpy = quatToEuler(quat)
+            rpy = data_list[i]["actions"]["torso_rpy"]
+            # master.torso_height = data_list[i]["states"]["odometry"]["position"][2]
+            master.torso_height = data_list[i]["actions"]["torso_height"]
             master.torso_roll = rpy[0]
             master.torso_pitch = rpy[1]
             master.torso_yaw = rpy[2]
