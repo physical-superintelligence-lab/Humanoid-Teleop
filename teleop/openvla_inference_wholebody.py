@@ -1,26 +1,32 @@
-import requests
-import json_numpy
-import numpy as np
-import os
 import json
-import cv2
-from robot_control.robot_arm import G1_29_ArmController
-from robot_control.robot_hand_unitree import Dex3_1_Controller
-from robot_control.compute_tau import GetTauer
+import os
+import threading
+import time
+
 # from openpi_client import image_tools
 # from openpi_client import websocket_client_policy
-from multiprocessing import Array, Event, Lock, shared_memory, Manager
-from master_whole_body import RobotTaskmaster
-import threading
+from multiprocessing import Array, Event, Lock, Manager, shared_memory
+
+import cv2
+import json_numpy
+import numpy as np
+import requests
 import zmq
-import time
+from master_whole_body import RobotTaskmaster
+from robot_control.compute_tau import GetTauer
+from robot_control.robot_arm import G1_29_ArmController
+from robot_control.robot_hand_unitree import Dex3_1_Controller
 
 FREQ = 3
 DELAY = 1 / FREQ
 
-task_instruction = "Walk towards the purple front door and then stop to grab the black handle."
+task_instruction = (
+    "Walk towards the purple front door and then stop to grab the black handle."
+)
 
-DATA_DIR = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_39"
+DATA_DIR = (
+    "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_39"
+)
 
 
 class RSCamera:
@@ -38,6 +44,7 @@ class RSCamera:
         rgb_image = cv2.imdecode(rgb_array, cv2.IMREAD_COLOR)
         return rgb_image
 
+
 # def get_observation(g1arm, g1hand,camera):
 #     frame = camera.get_frame()
 #     frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_AREA)
@@ -53,6 +60,7 @@ class RSCamera:
 #     }
 #     return obs
 
+
 def get_observation(camera):
     frame = camera.get_frame()
     frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_AREA)
@@ -66,7 +74,6 @@ def get_observation(camera):
 
 
 def get_observation_with_gt(idx):
-
     img_name = os.path.join("color", f"frame_{idx:06d}.jpg")
     path = os.path.join(DATA_DIR, img_name)
     if not os.path.exists(path):
@@ -88,14 +95,42 @@ def get_observation_with_gt(idx):
     return obs
 
 
+def action_request():
+    global pred_action_buffer
+    for step in range(max_timesteps):
+        obs = get_observation_with_gt(step * 10)
+        payload = {
+            "image": obs["image"],
+            "instruction": task_instruction,
+            "unnorm_key": unnorm_key,
+        }
+        resp = requests.post(url, json=payload)
+        with pred_action_lock:
+            pred_action_buffer = np.array(resp.json()["action"], dtype=float)[0]
+    kill_event.set()
+
+
+def control_loop():
+    global pred_action_buffer, kill_event
+    while not kill_event.is_set():
+        with pred_action_lock:
+            action = None if pred_action_buffer is None else pred_action_buffer.copy()
+        if action is not None:
+            master.ctrl_whole_body(action)
+
+        time.sleep(DELAY)
+
+
 if __name__ == "__main__":
+    pred_action_buffer = None
+    pred_action_lock = threading.Lock()
     # url = "http://10.128.0.72:8014/act"
     url = "http://localhost:8080/act"
     unnorm_key = "humanoid_dataset/Grab_handle"
     # patch json-numpy
     json_numpy.patch()
 
-    max_timesteps=500
+    max_timesteps = 500
 
     camera = RSCamera()
     get_tauer = GetTauer()
@@ -103,12 +138,12 @@ if __name__ == "__main__":
     merged_file_path = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_10/data.json"
 
     shared_data = {
-            "kill_event": Event(),
-            "session_start_event": Event(),
-            "failure_event": Event(),
-            "end_event": Event(),
-            "dirname": "/home/replay"
-        }
+        "kill_event": Event(),
+        "session_start_event": Event(),
+        "failure_event": Event(),
+        "end_event": Event(),
+        "dirname": "/home/replay",
+    }
     robot_shm_array = Array("d", 512, lock=False)
     teleop_shm_array = Array("d", 64, lock=False)
 
@@ -117,10 +152,11 @@ if __name__ == "__main__":
         shared_data=shared_data,
         robot_shm_array=robot_shm_array,
         teleop_shm_array=teleop_shm_array,
-        robot="g1"
+        robot="g1",
     )
 
     get_tauer = GetTauer()
+    kill_event = shared_data["kill_event"]
 
     try:
         # # initialize arm in the camera for Use eraser...
@@ -135,63 +171,33 @@ if __name__ == "__main__":
         # g1arm.ctrl_dual_arm(arm_state, q_tau_ff)
         # print("Finished Initializing, now wait 5 seconds for inference start...")
         # time.sleep(5)
-        stabilize_thread = threading.Thread(target=master.maintain_standing, daemon=True)
+        stabilize_thread = threading.Thread(
+            target=master.maintain_standing, daemon=True
+        )
         stabilize_thread.start()
         master.episode_kill_event.set()
         print("Initialize with standing pose...")
-        time.sleep(10) 
+        time.sleep(10)
         master.episode_kill_event.clear()
         last_pd_target = None
 
-        for step in range(max_timesteps):
-            print(f"Inference step {step}...")
-            # time.sleep(1)
-            # obs = get_observation(camera)
-            obs = get_observation_with_gt(step*10)
-            payload = {
-            "image": obs["image"],
-            "instruction": task_instruction,
-            "unnorm_key": unnorm_key,
-            }
-            resp = requests.post(url, json=payload)
-            # print("resp:", resp.json())
-            pred_action = np.array(resp.json()["action"], dtype=float)
-            pred_action = pred_action[0]
-            arm_poseList = pred_action[:14]
-            hand_poseList = pred_action[14:28]
-            current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
-            master.torso_roll = pred_action[28]
-            master.torso_pitch = pred_action[29]
-            master.torso_yaw = pred_action[30]
-            master.torso_height = pred_action[31]
+        request_thread = threading.Thread(target=action_request, daemon=False)
+        control_thread = threading.Thread(target=control_loop, daemon=False)
 
-            print("predicted torso r, p, y, h:", pred_action[28], pred_action[29], pred_action[30], pred_action[31])
+        request_thread.start()
+        control_thread.start()
 
-            master.get_ik_observation()
-            pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(
-                left_wrist=None,
-                right_wrist=None,
-                current_lr_arm_q=current_lr_arm_q,
-                current_lr_arm_dq=current_lr_arm_dq,
-                observation=master.observation,
-                extra_hist=master.extra_hist,
-                is_teleop=False
-            )
-            master.last_action = np.concatenate([raw_action.copy(), (master.motorstate - master.default_dof_pos)[15:] / master.action_scale])
-            pd_target[15:] = arm_poseList
-            pd_tauff[15:] = get_tauer(np.array(arm_poseList))
+        request_thread.join(timeout=5.0)
+        kill_event.set()
+        control_thread.join(timeout=5.0)
 
-            with master.dual_hand_data_lock:
-                master.hand_shm_array[:] = hand_poseList
+        # ok = master.safelySetMotor(pd_target, last_pd_target, pd_tauff)
+        # if ok:
+        #     last_pd_target = pd_target
+        # else:
+        #     continue
 
-            master.body_ctrl.ctrl_whole_body(pd_target[15:], pd_tauff[15:], pd_target[:15], pd_tauff[:15])
-            # ok = master.safelySetMotor(pd_target, last_pd_target, pd_tauff)
-            # if ok:
-            #     last_pd_target = pd_target
-            # else:
-            #     continue
-
-            # time.sleep(DELAY*10)
+        # time.sleep(DELAY*10)
 
         print("Replay finished. Returning to standing pose...")
         master.episode_kill_event.set()
@@ -200,6 +206,11 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Caught Ctrl+C, exiting gracefully...")
     finally:
+        request_thread.join(timeout=5.0)
+        kill_event.set()
+        control_thread.join(timeout=5.0)
+
         master.stop()
         master.hand_shm.close()
         master.hand_shm.unlink()
+

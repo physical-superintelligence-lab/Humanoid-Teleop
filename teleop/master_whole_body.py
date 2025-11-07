@@ -1,10 +1,15 @@
 import os
 import sys
+import threading
 import time
-from multiprocessing import Array, Event, Lock, Manager, Process, Queue, shared_memory
+import traceback
+from collections import deque
+from multiprocessing import (Array, Event, Lock, Manager, Process, Queue,
+                             shared_memory)
 
+import mujoco
 import numpy as np
-
+import torch
 from lidar import LidarProcess
 from merger import DataMerger
 from robot_control.robot_body import G1_29_BodyController
@@ -13,17 +18,13 @@ from robot_control.robot_hand_inspire import Inspire_Controller
 from robot_control.robot_hand_unitree import Dex3_1_Controller
 from utils.logger import logger
 from writers import IKDataWriter
-from collections import deque
-import torch
-import traceback
-import threading
-import mujoco
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 from constants import *
+
 
 def quatToEuler(quat):
     eulerVec = np.zeros(3)
@@ -675,3 +676,36 @@ class RobotTaskmaster:
         # TODO: auto delete
         with open(self.shared_data["dirname"] + "/failed", "w"):
             pass
+
+    def ctrl_whole_body(self, pred_action): # TODO: this is just a simple refactor. need to later refactor this out to RoboControllers
+        """
+        pred_action: np.array of shape (32,)
+        """
+        arm_poseList = pred_action[:14]
+        hand_poseList = pred_action[14:28]
+        current_lr_arm_q, current_lr_arm_dq = self.get_robot_data()
+        self.torso_roll = pred_action[28]
+        self.torso_pitch = pred_action[29]
+        self.torso_yaw = pred_action[30]
+        self.torso_height = pred_action[31]
+
+        print("predicted torso r, p, y, h:", pred_action[28], pred_action[29], pred_action[30], pred_action[31])
+        self.get_ik_observation()
+        pd_target, pd_tauff, raw_action = self.body_ik.solve_whole_body_ik(
+            left_wrist=None,
+            right_wrist=None,
+            current_lr_arm_q=current_lr_arm_q,
+            current_lr_arm_dq=current_lr_arm_dq,
+            observation=self.observation,
+            extra_hist=self.extra_hist,
+            is_teleop=False
+        )
+        self.last_action = np.concatenate([raw_action.copy(), (self.motorstate - self.default_dof_pos)[15:] / self.action_scale])
+        pd_target[15:] = arm_poseList
+        pd_tauff[15:] = get_tauer(np.array(arm_poseList))
+
+        with self.dual_hand_data_lock:
+            self.hand_shm_array[:] = hand_poseList
+
+        self.body_ctrl.ctrl_whole_body(pd_target[15:], pd_tauff[15:], pd_target[:15], pd_tauff[:15])
+
