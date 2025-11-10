@@ -1,32 +1,30 @@
-import json
 import os
-import threading
 import time
-
-# from openpi_client import image_tools
-# from openpi_client import websocket_client_policy
-from multiprocessing import Array, Event, Lock, Manager, shared_memory
+import threading
+import json
 
 import cv2
-import json_numpy
 import numpy as np
 import requests
-import zmq
+import json_numpy
+
+from multiprocessing import Array, Event
 from master_whole_body import RobotTaskmaster
 from robot_control.compute_tau import GetTauer
-from robot_control.robot_arm import G1_29_ArmController
-from robot_control.robot_hand_unitree import Dex3_1_Controller
+import zmq
 
-FREQ = 3
-DELAY = 1 / FREQ
+# ---------------- 配置 ----------------
+URL = "http://localhost:8014/act"  # 或 8080
+UNNORM_KEY = "humanoid_dataset/Grab_handle"
+TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
 
-task_instruction = (
-    "Walk towards the purple front door and then stop to grab the black handle."
-)
+DATA_DIR = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_10"
 
-DATA_DIR = (
-    "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_39"
-)
+FREQ_VLA = 3      # OpenVLA 请求频率
+FREQ_CTRL = 100    # 控制频率 (Hz)
+MAX_STEPS = 500
+
+json_numpy.patch()
 
 
 class RSCamera:
@@ -45,25 +43,21 @@ class RSCamera:
         return rgb_image
 
 
-# def get_observation(g1arm, g1hand,camera):
-#     frame = camera.get_frame()
-#     frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_AREA)
-#     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#     img = frame.astype(np.uint8)
-
-#     arm_q = g1arm.get_current_motor_q()
-#     hand_q = g1hand.get_current_dual_hand_q()
-#     qpos = np.concatenate([arm_q[15:29], hand_q])
-#     obs = {
-#         "image": frame,
-#         "qpos": qpos,
-#     }
-#     return obs
+# ---------------- 工具函数 ----------------
+def get_observation_with_gt(idx):
+    img_name = os.path.join(DATA_DIR, "color", f"frame_{idx:06d}.jpg")
+    if not os.path.exists(img_name):
+        raise FileNotFoundError(f"Image not found: {img_name}")
+    frame = cv2.imread(img_name, cv2.IMREAD_COLOR)
+    # frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    img = frame.astype(np.uint8)
+    return {"image": img}
 
 
 def get_observation(camera):
     frame = camera.get_frame()
-    frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_AREA)
+    frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = frame.astype(np.uint8)
 
@@ -73,70 +67,9 @@ def get_observation(camera):
     return obs
 
 
-def get_observation_with_gt(idx):
-    img_name = os.path.join("color", f"frame_{idx:06d}.jpg")
-    path = os.path.join(DATA_DIR, img_name)
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Image not found: {path}")
-
-    frame = cv2.imread(path, cv2.IMREAD_COLOR)
-    frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    img = frame.astype(np.uint8)
-
-    # frame = camera.get_frame()
-    # frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_AREA)
-    # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    # img = frame.astype(np.uint8)
-
-    obs = {
-        "image": img,
-    }
-    return obs
-
-
-def action_request():
-    global pred_action_buffer
-    for step in range(max_timesteps):
-        obs = get_observation_with_gt(step * 10)
-        payload = {
-            "image": obs["image"],
-            "instruction": task_instruction,
-            "unnorm_key": unnorm_key,
-        }
-        resp = requests.post(url, json=payload)
-        with pred_action_lock:
-            pred_action_buffer = np.array(resp.json()["action"], dtype=float)[0]
-    kill_event.set()
-
-
-def control_loop():
-    global pred_action_buffer, kill_event
-    while not kill_event.is_set():
-        with pred_action_lock:
-            action = None if pred_action_buffer is None else pred_action_buffer.copy()
-        if action is not None:
-            master.ctrl_whole_body(action)
-
-        time.sleep(DELAY)
-
-
-if __name__ == "__main__":
-    pred_action_buffer = None
-    pred_action_lock = threading.Lock()
-    # url = "http://10.128.0.72:8014/act"
-    url = "http://localhost:8080/act"
-    unnorm_key = "humanoid_dataset/Grab_handle"
-    # patch json-numpy
-    json_numpy.patch()
-
-    max_timesteps = 500
-
-    camera = RSCamera()
-    get_tauer = GetTauer()
-
-    merged_file_path = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_10/data.json"
-
+# ---------------- 主逻辑 ----------------
+def main():
+    # 共享事件 & shm
     shared_data = {
         "kill_event": Event(),
         "session_start_event": Event(),
@@ -144,6 +77,8 @@ if __name__ == "__main__":
         "end_event": Event(),
         "dirname": "/home/replay",
     }
+    kill_event = shared_data["kill_event"]
+
     robot_shm_array = Array("d", 512, lock=False)
     teleop_shm_array = Array("d", 64, lock=False)
 
@@ -156,61 +91,156 @@ if __name__ == "__main__":
     )
 
     get_tauer = GetTauer()
-    kill_event = shared_data["kill_event"]
+    camera = RSCamera()
 
-    try:
-        # # initialize arm in the camera for Use eraser...
-        # arm_state = np.array([0.375, 0.592, 0.113, -0.486, -0.481, -0.380, -0.510, -0.077, -0.171, -0.093, 1.214, -0.105, -0.619, -0.195])
-        # hand_state = np.array([-0.149, 0.663, 0.608, -0.436, -0.661, -0.495, -0.432, -0.300, -0.499, -0.631, 0.691, 0.454, 0.561, 0.413])
-        # initialize arm in the camera for Fold towel
-        # arm_state = np.array([-0.349, 0.928, 0.140, -0.147, -0.122, 0.077, -0.408, -0.111, -0.261, -0.241, 1.219, -0.008, -0.318, -0.134])
-        # hand_state = np.array([-0.303, 0.291, 0.811, -0.067, -0.446, -0.046, -0.441, -0.150, -0.647, -0.611, 0.636, 0.491, 0.506, 0.443])
-        # with dual_hand_data_lock:
-        #     hand_shm_array[:] = hand_state
-        # q_tau_ff = get_tauer(arm_state)
-        # g1arm.ctrl_dual_arm(arm_state, q_tau_ff)
-        # print("Finished Initializing, now wait 5 seconds for inference start...")
-        # time.sleep(5)
-        stabilize_thread = threading.Thread(
-            target=master.maintain_standing, daemon=True
-        )
-        stabilize_thread.start()
-        master.episode_kill_event.set()
-        print("Initialize with standing pose...")
-        time.sleep(10)
-        master.episode_kill_event.clear()
-        last_pd_target = None
+    # 共享 buffer：VLA 写入，控制 loop 读取
+    pred_action_buffer = {"action": None}
+    pred_action_lock = threading.Lock()
 
-        request_thread = threading.Thread(target=action_request, daemon=False)
-        control_thread = threading.Thread(target=control_loop, daemon=False)
+    running = Event()
+    running.set()
 
-        request_thread.start()
-        control_thread.start()
+    # -------- 线程1：请求 OpenVLA，写入 buffer --------
+    def action_request_thread():
+        s = requests.Session()
+        for step in range(MAX_STEPS):
+            if not running.is_set():
+                break
+            try:
+                # obs = get_observation_with_gt(step * 10)
+                obs = get_observation(camera)
+                payload = {
+                    "image": obs["image"],
+                    "instruction": TASK_INSTRUCTION,
+                    "unnorm_key": UNNORM_KEY,
+                }
+                resp = s.post(URL, json=payload)
+                resp.raise_for_status()
+                action = np.array(resp.json()["action"], dtype=float)[0]
+                with pred_action_lock:
+                    pred_action_buffer["action"] = action
+                print(f"[VLA] step {step}, got action.")
+            except Exception as e:
+                print(f"[VLA] step {step} failed: {e}")
+            # time.sleep(1.0 / FREQ_VLA)
 
-        request_thread.join(timeout=5.0)
+        print("[VLA] Finished or stopped. Signaling kill_event.")
         kill_event.set()
-        control_thread.join(timeout=5.0)
+
+    # -------- 辅助：根据 action 构造并下发电机命令 --------
+    def apply_action_from_buffer(last_pd_target):
+        with pred_action_lock:
+            action = pred_action_buffer["action"].copy() if pred_action_buffer["action"] is not None else None
+
+        if action is None:
+            return last_pd_target  # 没有新指令就保持
+
+        if action.shape[0] < 32:
+            print("[CTRL] Invalid action shape:", action.shape)
+            return last_pd_target
+
+        # 解析 action: [0:14]=arm, [14:28]=hand, [28:32]=r,p,y,h
+        arm = action[4:18]
+        hand = action[18:32]
+        rpyh = action[0:4]
+
+        current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
+
+        # 更新 torso 目标供 observation 使用
+        master.torso_roll = rpyh[0]
+        master.torso_pitch = rpyh[1]
+        master.torso_yaw = rpyh[2]
+        master.torso_height = rpyh[3]
+
+        # 读当前机器人状态
+        master.get_ik_observation()
+
+        # 下肢 policy
+        pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(
+            left_wrist=None,
+            right_wrist=None,
+            current_lr_arm_q=current_lr_arm_q,
+            current_lr_arm_dq=current_lr_arm_dq,
+            observation=master.observation,
+            extra_hist=master.extra_hist,
+            is_teleop=False,
+        )
+
+
+        master.last_action = np.concatenate([
+            raw_action.copy(),
+            (master.motorstate - master.default_dof_pos)[15:] / master.action_scale,
+        ])
+
+        # 上肢关节来自 VLA
+        pd_target[15:] = arm.astype(pd_target.dtype, copy=False)
+
+        tau_arm = np.asarray(get_tauer(arm), dtype=np.float64).reshape(-1)
+
+        pd_tauff[15:] = tau_arm.astype(pd_tauff.dtype, copy=False)
+
+        # 手部
+        with master.dual_hand_data_lock:
+            master.hand_shm_array[:] = hand
 
         # ok = master.safelySetMotor(pd_target, last_pd_target, pd_tauff)
-        # if ok:
-        #     last_pd_target = pd_target
-        # else:
-        #     continue
+        # if not ok:
+        #     print("[CTRL] safelySetMotor rejected step.")
+        #     return last_pd_target
+        master.body_ctrl.ctrl_whole_body(pd_target[15:], pd_tauff[15:], pd_target[:15], pd_tauff[:15])
 
-        # time.sleep(DELAY*10)
+        return pd_target
 
-        print("Replay finished. Returning to standing pose...")
+    # -------- 线程2：高频控制 loop --------
+    def control_loop_thread():
+        dt = 1.0 / FREQ_CTRL
+        last_pd_target = None
+        while running.is_set() and not kill_event.is_set():
+            try:
+                last_pd_target = apply_action_from_buffer(last_pd_target)
+            except Exception as e:
+                print("[CTRL] loop error:", e)
+            time.sleep(dt)
+        print("[CTRL] Control loop stopped.")
+
+    try:
+        # 1. 先站立 20 秒
+        stabilize_thread = threading.Thread(target=master.maintain_standing, daemon=True)
+        stabilize_thread.start()
         master.episode_kill_event.set()
-        time.sleep(10)
+        print("[MAIN] Initialize with standing pose...")
+        time.sleep(40)
+        master.episode_kill_event.clear()  # 停止站立控制，只留下面的控制线程写电机
+
+        # 2. 启动双线程
+        t_req = threading.Thread(target=action_request_thread, daemon=True)
+        t_ctrl = threading.Thread(target=control_loop_thread, daemon=True)
+        t_req.start()
+        t_ctrl.start()
+
+        print("[MAIN] Running. Ctrl+C to stop.")
+        # 主线程等待 kill_event（VLA结束）或 Ctrl+C
+        while not kill_event.is_set():
+            time.sleep(0.5)
+
+        print("[MAIN] kill_event set, preparing to stop...")
+        running.clear()
+        time.sleep(0.5)  # 给线程一点时间收尾
+
+        # 3. 可选：回到站立姿态
+        master.episode_kill_event.set()
+        print("[MAIN] Returning to standing pose for 5s...")
+        time.sleep(5)
+        master.episode_kill_event.clear()
 
     except KeyboardInterrupt:
-        print("Caught Ctrl+C, exiting gracefully...")
-    finally:
-        request_thread.join(timeout=5.0)
+        print("[MAIN] Caught Ctrl+C, exiting...")
+        running.clear()
         kill_event.set()
-        control_thread.join(timeout=5.0)
-
+    finally:
+        shared_data["end_event"].set()
         master.stop()
-        master.hand_shm.close()
-        master.hand_shm.unlink()
+        print("[MAIN] Shutdown complete.")
 
+if __name__ == "__main__":
+    main()

@@ -18,6 +18,7 @@ from robot_control.robot_hand_inspire import Inspire_Controller
 from robot_control.robot_hand_unitree import Dex3_1_Controller
 from utils.logger import logger
 from writers import IKDataWriter
+from robot_control.compute_tau import GetTauer
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -56,6 +57,8 @@ class RobotTaskmaster:
     def __init__(
         self, task_name, shared_data, robot_shm_array, teleop_shm_array, robot="h1"
     ): 
+        
+        self.get_tauer = GetTauer()
 
         self.task_name = task_name
         self.robot = robot
@@ -140,7 +143,7 @@ class RobotTaskmaster:
         self.output_mean = torch.tensor(norm_stats['output_mean'], device=self.device, dtype=torch.float32)
         self.output_std = torch.tensor(norm_stats['output_std'], device=self.device, dtype=torch.float32)
 
-        self.adapter_input = torch.zeros((1, 8 + 4), device=self.device, dtype=torch.float32)
+        # self.adapter_input = torch.zeros((1, 8 + 4), device=self.device, dtype=torch.float32)
         self.adapter_output = torch.zeros((1, 15), device=self.device, dtype=torch.float32)
 
         # initialize parameters for torso
@@ -289,14 +292,14 @@ class RobotTaskmaster:
 
         gait_obs = np.sin(self.gait_cycle * 2 * np.pi)
 
-        self.adapter_input = np.concatenate([np.zeros(4), obs_dof_pos[15:]])
+        adapter_input_np = np.concatenate([np.zeros(4), obs_dof_pos[15:]])
 
-        self.adapter_input[0] = self.torso_height
-        self.adapter_input[1] = self.torso_yaw
-        self.adapter_input[2] = self.torso_pitch
-        self.adapter_input[3] = self.torso_roll
+        adapter_input_np[0] = self.torso_height
+        adapter_input_np[1] = self.torso_yaw
+        adapter_input_np[2] = self.torso_pitch
+        adapter_input_np[3] = self.torso_roll
 
-        self.adapter_input = torch.tensor(self.adapter_input).to(self.device, dtype=torch.float32).unsqueeze(0)
+        self.adapter_input = torch.tensor(adapter_input_np).to(self.device, dtype=torch.float32).unsqueeze(0)
 
         self.adapter_input = (self.adapter_input - self.input_mean) / (self.input_std + 1e-8)
         self.adapter_output = self.adapter(self.adapter_input.view(1, -1))
@@ -702,7 +705,7 @@ class RobotTaskmaster:
         )
         self.last_action = np.concatenate([raw_action.copy(), (self.motorstate - self.default_dof_pos)[15:] / self.action_scale])
         pd_target[15:] = arm_poseList
-        pd_tauff[15:] = get_tauer(np.array(arm_poseList))
+        pd_tauff[15:] = self.get_tauer(np.array(arm_poseList))
 
         with self.dual_hand_data_lock:
             self.hand_shm_array[:] = hand_poseList
