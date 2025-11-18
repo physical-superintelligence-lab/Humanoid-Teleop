@@ -80,6 +80,7 @@ if __name__ == "__main__":
 
         for i in range(0, len(data_list) - 1):
             arm_poseList = data_list[i]["states"]["arm_state"]
+            #arm_poseList = data_list[i]["actions"]["sol_q"][-14:]
             current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
             # rpy = data_list[i]["states"]["imu"]["rpy"]
             # quat = data_list[i]["states"]["imu"]["quaternion"]
@@ -92,6 +93,7 @@ if __name__ == "__main__":
             master.torso_yaw = rpy[2]
 
             hand_poseList = data_list[i]["states"]["hand_state"]
+            #hand_poseList =  data_list[i]["actions"]["left_angles"] + data_list[i]["actions"]["right_angles"]
 
             master.get_ik_observation()
             pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(

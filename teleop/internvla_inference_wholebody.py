@@ -2,54 +2,21 @@ import os
 import time
 import threading
 import json
+
 import cv2
 import numpy as np
 import requests
+import json_numpy
+
 from multiprocessing import Array, Event
 from master_whole_body import RobotTaskmaster
 from robot_control.compute_tau import GetTauer
 import zmq
-import dataclasses
-import enum
-import logging
-import pathlib
-from openpi_client import websocket_client_policy as _websocket_client_policy
-import polars as pl
-import rich
-import tqdm
-import tyro
-from typing import Optional
 
-logger = logging.getLogger(__name__)
-
-@dataclasses.dataclass
-class Args:
-    """Command line arguments."""
-
-    # Host and port to connect to the server.
-    host: str = "0.0.0.0"
-    # Port to connect to the server. If None, the server will use the default port.
-    port: Optional[int] = 8000
-
-    api_key: Optional[str] = None
-    # Number of steps to run the policy for.
-    num_steps: int = 20
-    # Path to save the timings to a parquet file. (e.g., timing.parquet)
-    timing_file: Optional[pathlib.Path] = None
-    # Environment to run the policy in.
-    # env: EnvMode = EnvMode.ALOHA_SIM
-
-args = Args()
-
-policy = _websocket_client_policy.WebsocketClientPolicy(
-    host=args.host,
-    port=args.port,
-    api_key=args.api_key,
-)
-
-logger.info(f"Server metadata: {policy.get_server_metadata()}")
-
-TASK_INSTRUCTION = "fullbody/pick_up_dumpling_toy_and_squat_to_put_on_chair"
+# ---------------- 配置 ----------------
+URL = "http://localhost:8014/act"  # 或 8080
+UNNORM_KEY = "humanoid_dataset/Grab_handle"
+TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
 
 DATA_DIR = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_10"
 
@@ -58,6 +25,8 @@ FREQ_CTRL = 90    # 控制频率 (Hz)
 MAX_STEPS = 500
 
 ACTION_REPEAT = max(1, int(round(FREQ_CTRL / FREQ_VLA)))
+
+json_numpy.patch()
 
 
 class RSCamera:
@@ -129,12 +98,6 @@ def main():
     # 共享 buffer：VLA 写入，控制 loop 读取
     pred_action_buffer = {"actions": None, "idx": 0}
     pred_action_lock = threading.Lock()
-    state_lock = threading.Lock()
-    shared_robot_state = {
-        "motor": None,
-        "hand": None,
-    }
-
 
     running = Event()
     running.set()
@@ -144,121 +107,118 @@ def main():
 
     # -------- 线程1：请求 OpenVLA，写入 buffer --------
     def action_request_thread():
+        s = requests.Session()
         for step in range(MAX_STEPS):
             if not running.is_set():
                 break
 
-            # 等待 sequence 执行完
             sequence_done_event.wait()
 
-            time.sleep(1/FREQ_VLA)
-
             try:
-                # ============ 构造 obs（基于你的 websocket 模型要求） ============
-                # 1. 图像
-                # obs_img = get_observation_with_gt(step * 60)["image"]
-                obs_img = get_observation(camera)["image"]
-
-                # 2. 从控制线程共享的 state buffer 读取 motor + hand
-                with state_lock:
-                    motor = shared_robot_state["motor"].copy() if shared_robot_state["motor"] is not None else None
-                    hand = shared_robot_state["hand"].copy() if shared_robot_state["hand"] is not None else None
-
-                if motor is None or hand is None:
-                    print("[VLA] Waiting for robot state...")
-                    time.sleep(0.01)
-                    continue
-
-                # motor joints 结构按你当前实现划分
-                arm_joints = motor[15:29]
-                hand_joints = hand
-                leg_joints = motor[:15]
-
-                # websocket obs payload
-                obs_payload = {
-                    "observation/image": obs_img,
-                    "observation/arm_joints": arm_joints,
-                    "observation/hand_joints": hand_joints,
-                    "observation/leg_joints": leg_joints,
-                    "prompt": TASK_INSTRUCTION
+                # obs = get_observation_with_gt(step * 16)
+                obs = get_observation(camera)
+                payload = {
+                    "image": obs["image"],
+                    "instruction": TASK_INSTRUCTION,
+                    "unnorm_key": UNNORM_KEY,
                 }
-
-                # ============ 执行 websocket inference ============
-                result = policy.infer(obs_payload)
-
-                # 返回格式假设为 {"actions": N×32 matrix}
-                actions = np.array(result["actions"], dtype=float)
-                if len(actions.shape) != 2:
-                    print("[VLA] invalid sequence:", actions.shape)
+                resp = s.post(URL, json=payload)
+                resp.raise_for_status()
+                actions = np.array(resp.json()["action"], dtype=float)
+                if len(actions.shape) != 2 or actions.shape[1] < 32:
+                    print("[VLA] invalid action seq:", actions.shape)
                     continue
 
-                # 写入 action buffer
                 with pred_action_lock:
                     pred_action_buffer["actions"] = actions
                     pred_action_buffer["idx"] = 0
-
-                print(f"[VLA] Got websocket sequence: {len(actions)} actions")
-
-                # 不允许继续请求，等待 control 执行完
+                print(f"[VLA] Got sequence of {len(actions)} actions.")
                 sequence_done_event.clear()
-
             except Exception as e:
-                print(f"[VLA] Websocket error: {e}")
-                time.sleep(0.05)
+                print(f"[VLA] step {step} failed: {e}")
+            time.sleep(1.0 / FREQ_VLA)
 
+        print("[VLA] Finished or stopped. Signaling kill_event.")
+        kill_event.set()
 
     # -------- 辅助：根据 action 构造并下发电机命令 --------
     def apply_action_from_buffer(last_pd_target):
-        # 先更新机器人当前状态（无论有没有 actions，都要做）
+        # 1) 每个控制周期都先读取机器人当前状态
         current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
-        with state_lock:
-            shared_robot_state["motor"] = master.motorstate.copy()
-            shared_robot_state["hand"] = master.handstate.copy()
 
-        # 然后再读 action buffer
+        # 2) 读取当前 action buffer，看看这一 tick 是否有 VLA action 要用
         with pred_action_lock:
             actions = pred_action_buffer["actions"]
             idx = pred_action_buffer["idx"]
 
-        # 还没有任何动作序列时，只更新 state，不控制
-        if actions is None:
-            return last_pd_target
+            action = None
+            have_vla = False
 
-        # 计算当前 action index = floor(idx / ACTION_REPEAT)
-        real_idx = idx // ACTION_REPEAT
+            if actions is not None:
+                real_idx = idx // ACTION_REPEAT
+                if real_idx < len(actions):
+                    # 本 tick 应该使用的 VLA 动作
+                    action = actions[real_idx]
+                    have_vla = True
 
-        # 已经执行完所有 action
-        if real_idx >= len(actions):
-            with pred_action_lock:
-                pred_action_buffer["actions"] = None
-                pred_action_buffer["idx"] = 0
-            sequence_done_event.set()
-            return last_pd_target
+                    # index 自增
+                    pred_action_buffer["idx"] += 1
 
-        # 这是真正执行的 action
-        action = actions[real_idx]
+                    # 如果整个 sequence 播放完了，下次 allow 下一个 horizon
+                    next_real_idx = pred_action_buffer["idx"] // ACTION_REPEAT
+                    if next_real_idx >= len(actions):
+                        pred_action_buffer["actions"] = None
+                        pred_action_buffer["idx"] = 0
+                        sequence_done_event.set()
+                else:
+                    # 安全兜底：已经超过序列长度
+                    pred_action_buffer["actions"] = None
+                    pred_action_buffer["idx"] = 0
+                    sequence_done_event.set()
 
-        print("action:", action)
+        # 3) 如果这一 tick 有来自 VLA 的 action，就更新 torso_* / arm / hand 指令
+        arm_cmd = None
+        hand_cmd = None
+        if have_vla:
+            if action.shape[0] < 32:
+                print("[CTRL] Invalid action shape:", action.shape)
+            else:
+                # 注意这里的切片要和你训练时的 layout 一致
+                rpyh   = action[28:32]
+                arm_cmd = action[14:28]
+                hand_cmd = action[:14]
 
-        # 下一个 control loop idx + 1
-        with pred_action_lock:
-            pred_action_buffer["idx"] += 1
+                master.torso_roll   = rpyh[0]
+                master.torso_pitch  = rpyh[1]
+                master.torso_yaw    = rpyh[2]
+                master.torso_height = rpyh[3]
 
-        # ---------------- 后面的代码原样保留 ----------------
-        if action.shape[0] < 32:
-            print("[CTRL] Invalid action shape:", action.shape)
-            return last_pd_target
+                master.prev_torso_roll   = master.torso_roll
+                master.prev_torso_pitch  = master.torso_pitch
+                master.prev_torso_yaw    = master.torso_yaw
+                master.prev_torso_height = master.torso_height
 
-        arm = action[4:18]
-        hand = action[18:32]
-        rpyh = action[:4]
+                master.prev_arm = arm_cmd
+                master.prev_hand = hand_cmd
 
-        master.torso_roll = rpyh[1]
-        master.torso_pitch = rpyh[2]
-        master.torso_yaw = rpyh[3]
-        master.torso_height = rpyh[0]
+                # print("action:", action)
+        
+        if not have_vla:
+            master.torso_roll   = master.prev_torso_roll
+            master.torso_pitch  = master.prev_torso_pitch
+            master.torso_yaw    = master.prev_torso_yaw
+            master.torso_height = master.prev_torso_height
 
+            arm_cmd = master.prev_arm
+            hand_cmd = master.prev_hand
+        
+        print("torso_yaw:", master.torso_yaw)
+        print("torso_height:", master.torso_height)
+
+
+        # 4) 无论有没有新 action，**都要跑 IK + whole-body control**
         master.get_ik_observation()
+
 
         pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(
             left_wrist=None,
@@ -275,18 +235,24 @@ def main():
             (master.motorstate - master.default_dof_pos)[15:] / master.action_scale,
         ])
 
-        pd_target[15:] = arm
-        tau_arm = np.asarray(get_tauer(arm), dtype=np.float64).reshape(-1)
-        pd_tauff[15:] = tau_arm
+        # 5) 如果这一 tick 有上肢 command，就覆盖 pd_target 中的上肢部分
+        if arm_cmd is not None:
+            pd_target[15:] = arm_cmd
+            tau_arm = np.asarray(get_tauer(arm_cmd), dtype=np.float64).reshape(-1)
+            pd_tauff[15:] = tau_arm
 
-        with master.dual_hand_data_lock:
-            master.hand_shm_array[:] = hand
+        # 同样，如果这一 tick 有手的 command，就发给 hand
+        if hand_cmd is not None:
+            with master.dual_hand_data_lock:
+                master.hand_shm_array[:] = hand_cmd
 
+        # 6) 每个 90Hz tick 都要下到电机，不管有没有 VLA 新动作
         master.body_ctrl.ctrl_whole_body(
             pd_target[15:], pd_tauff[15:], pd_target[:15], pd_tauff[:15]
         )
 
         return pd_target
+
     
 
 
@@ -308,7 +274,7 @@ def main():
         stabilize_thread.start()
         master.episode_kill_event.set()
         print("[MAIN] Initialize with standing pose...")
-        time.sleep(20)
+        time.sleep(40)
         master.episode_kill_event.clear()  # 停止站立控制，只留下面的控制线程写电机
 
         # 2. 启动双线程

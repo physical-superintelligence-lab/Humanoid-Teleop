@@ -209,57 +209,70 @@ def main():
 
     # -------- 辅助：根据 action 构造并下发电机命令 --------
     def apply_action_from_buffer(last_pd_target):
-        # 先更新机器人当前状态（无论有没有 actions，都要做）
+        # 1) 更新机器人当前状态
         current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
         with state_lock:
             shared_robot_state["motor"] = master.motorstate.copy()
             shared_robot_state["hand"] = master.handstate.copy()
 
-        # 然后再读 action buffer
+        # 2) 读取当前动作序列
         with pred_action_lock:
             actions = pred_action_buffer["actions"]
             idx = pred_action_buffer["idx"]
 
-        # 还没有任何动作序列时，只更新 state，不控制
-        if actions is None:
-            return last_pd_target
+        have_vla = False
+        arm_cmd = None
+        hand_cmd = None
 
-        # 计算当前 action index = floor(idx / ACTION_REPEAT)
-        real_idx = idx // ACTION_REPEAT
+        if actions is not None:
+            real_idx = idx // ACTION_REPEAT
 
-        # 已经执行完所有 action
-        if real_idx >= len(actions):
-            with pred_action_lock:
-                pred_action_buffer["actions"] = None
-                pred_action_buffer["idx"] = 0
-            sequence_done_event.set()
-            return last_pd_target
+            if real_idx < len(actions):
+                # 用当前 VLA 动作
+                action = actions[real_idx]
+                have_vla = True
+                with pred_action_lock:
+                    pred_action_buffer["idx"] += 1
 
-        # 这是真正执行的 action
-        action = actions[real_idx]
+                # torso + arm + hand
+                rpyh = action[:4]
+                arm  = action[4:18]
+                hand = action[18:32]
 
-        print("action:", action)
+                master.torso_height = rpyh[0]
+                master.torso_roll   = rpyh[1]
+                master.torso_pitch  = rpyh[2]
+                master.torso_yaw    = rpyh[3]
 
-        # 下一个 control loop idx + 1
-        with pred_action_lock:
-            pred_action_buffer["idx"] += 1
+                arm_cmd  = arm
+                hand_cmd = hand
 
-        # ---------------- 后面的代码原样保留 ----------------
-        if action.shape[0] < 32:
-            print("[CTRL] Invalid action shape:", action.shape)
-            return last_pd_target
+                # 保存上一帧
+                master.prev_torso_h = master.torso_height
+                master.prev_torso_r = master.torso_roll
+                master.prev_torso_p = master.torso_pitch
+                master.prev_torso_y = master.torso_yaw
+                master.prev_arm  = arm_cmd
+                master.prev_hand = hand_cmd
 
-        arm = action[4:18]
-        hand = action[18:32]
-        rpyh = action[:4]
+            else:
+                # 播完一个 horizon
+                with pred_action_lock:
+                    pred_action_buffer["actions"] = None
+                    pred_action_buffer["idx"] = 0
+                sequence_done_event.set()
 
-        master.torso_roll = rpyh[1]
-        master.torso_pitch = rpyh[2]
-        master.torso_yaw = rpyh[3]
-        master.torso_height = rpyh[0]
+        # 如果没有新的 VLA 动作，保持上一帧
+        if not have_vla:
+            master.torso_height = master.prev_torso_h
+            master.torso_roll   = master.prev_torso_r
+            master.torso_pitch  = master.prev_torso_p
+            master.torso_yaw    = master.prev_torso_y
+            arm_cmd  = master.prev_arm
+            hand_cmd = master.prev_hand
 
+        # 继续跑IK
         master.get_ik_observation()
-
         pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(
             left_wrist=None,
             right_wrist=None,
@@ -270,18 +283,16 @@ def main():
             is_teleop=False,
         )
 
-        master.last_action = np.concatenate([
-            raw_action.copy(),
-            (master.motorstate - master.default_dof_pos)[15:] / master.action_scale,
-        ])
-
-        pd_target[15:] = arm
-        tau_arm = np.asarray(get_tauer(arm), dtype=np.float64).reshape(-1)
+        # 覆盖 arm
+        pd_target[15:] = arm_cmd
+        tau_arm = np.asarray(get_tauer(arm_cmd), dtype=np.float64).reshape(-1)
         pd_tauff[15:] = tau_arm
 
+        # 覆盖 hand
         with master.dual_hand_data_lock:
-            master.hand_shm_array[:] = hand
+            master.hand_shm_array[:] = hand_cmd
 
+        # 每帧都 control
         master.body_ctrl.ctrl_whole_body(
             pd_target[15:], pd_tauff[15:], pd_target[:15], pd_tauff[:15]
         )

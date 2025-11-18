@@ -152,6 +152,13 @@ class RobotTaskmaster:
         self.torso_pitch = 0.0
         self.torso_yaw = 0.0
 
+        self.prev_torso_roll   = 0.0
+        self.prev_torso_pitch  = 0.0
+        self.prev_torso_yaw    = 0.0
+        self.prev_torso_height = 0.75
+        self.prev_arm = None
+        self.prev_hand = None
+        
         try:
             if robot == "g1":
                 logger.info("Using g1 controllers")
@@ -382,6 +389,7 @@ class RobotTaskmaster:
         # print("in_place_stand_flag:", self._in_place_stand_flag)
 
         handstate = self.hand_ctrl.get_current_dual_hand_q()
+        self.handstate = handstate
         if self.robot == "g1":
             hand_press_state = self.hand_ctrl.get_current_dual_hand_pressure()
             robot_sizes = G1_sizes
