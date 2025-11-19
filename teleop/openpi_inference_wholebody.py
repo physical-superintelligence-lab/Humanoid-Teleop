@@ -209,56 +209,85 @@ def main():
 
     # -------- 辅助：根据 action 构造并下发电机命令 --------
     def apply_action_from_buffer(last_pd_target):
-        # 先更新机器人当前状态（无论有没有 actions，都要做）
+        # 1) 每个控制周期都先读取机器人当前状态
         current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
         with state_lock:
             shared_robot_state["motor"] = master.motorstate.copy()
             shared_robot_state["hand"] = master.handstate.copy()
 
-        # 然后再读 action buffer
+        # 2) 读取当前 action buffer，看看这一 tick 是否有 VLA action 要用
         with pred_action_lock:
             actions = pred_action_buffer["actions"]
             idx = pred_action_buffer["idx"]
 
-        # 还没有任何动作序列时，只更新 state，不控制
-        if actions is None:
-            return last_pd_target
+            action = None
+            have_vla = False
 
-        # 计算当前 action index = floor(idx / ACTION_REPEAT)
-        real_idx = idx // ACTION_REPEAT
+            if actions is not None:
+                real_idx = idx // ACTION_REPEAT
+                if real_idx < len(actions):
+                    # 本 tick 应该使用的 VLA 动作
+                    action = actions[real_idx]
+                    have_vla = True
 
-        # 已经执行完所有 action
-        if real_idx >= len(actions):
-            with pred_action_lock:
-                pred_action_buffer["actions"] = None
-                pred_action_buffer["idx"] = 0
-            sequence_done_event.set()
-            return last_pd_target
+                    # index 自增
+                    pred_action_buffer["idx"] += 1
 
-        # 这是真正执行的 action
-        action = actions[real_idx]
+                    # 如果整个 sequence 播放完了，下次 allow 下一个 horizon
+                    next_real_idx = pred_action_buffer["idx"] // ACTION_REPEAT
+                    if next_real_idx >= len(actions):
+                        pred_action_buffer["actions"] = None
+                        pred_action_buffer["idx"] = 0
+                        sequence_done_event.set()
+                else:
+                    # 安全兜底：已经超过序列长度
+                    pred_action_buffer["actions"] = None
+                    pred_action_buffer["idx"] = 0
+                    sequence_done_event.set()
 
-        print("action:", action)
+        # 3) 如果这一 tick 有来自 VLA 的 action，就更新 torso_* / arm / hand 指令
+        arm_cmd = None
+        hand_cmd = None
+        if have_vla:
+            if action.shape[0] < 32:
+                print("[CTRL] Invalid action shape:", action.shape)
+            else:
+                # 注意这里的切片要和你训练时的 layout 一致
+                rpyh   = action[:4]
+                arm_cmd = action[4:18]
+                hand_cmd = action[18:32]
 
-        # 下一个 control loop idx + 1
-        with pred_action_lock:
-            pred_action_buffer["idx"] += 1
+                master.torso_roll   = rpyh[1]
+                master.torso_pitch  = rpyh[2]
+                master.torso_yaw    = rpyh[3]
+                master.torso_height = rpyh[0]
 
-        # ---------------- 后面的代码原样保留 ----------------
-        if action.shape[0] < 32:
-            print("[CTRL] Invalid action shape:", action.shape)
-            return last_pd_target
+                master.prev_torso_roll   = master.torso_roll
+                master.prev_torso_pitch  = master.torso_pitch
+                master.prev_torso_yaw    = master.torso_yaw
+                master.prev_torso_height = master.torso_height
 
-        arm = action[4:18]
-        hand = action[18:32]
-        rpyh = action[:4]
+                master.prev_arm = arm_cmd
+                master.prev_hand = hand_cmd
 
-        master.torso_roll = rpyh[1]
-        master.torso_pitch = rpyh[2]
-        master.torso_yaw = rpyh[3]
-        master.torso_height = rpyh[0]
+                # print("action:", action)
+        
+        if not have_vla:
+            master.torso_roll   = master.prev_torso_roll
+            master.torso_pitch  = master.prev_torso_pitch
+            master.torso_yaw    = master.prev_torso_yaw
+            master.torso_height = master.prev_torso_height
 
+            arm_cmd = master.prev_arm
+            hand_cmd = master.prev_hand
+        
+        print("torso_yaw:", master.torso_yaw)
+        print("torso_height:", master.torso_height)
+
+
+        # 4) 无论有没有新 action，**都要跑 IK + whole-body control**
         master.get_ik_observation()
+
 
         pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(
             left_wrist=None,
@@ -275,18 +304,24 @@ def main():
             (master.motorstate - master.default_dof_pos)[15:] / master.action_scale,
         ])
 
-        pd_target[15:] = arm
-        tau_arm = np.asarray(get_tauer(arm), dtype=np.float64).reshape(-1)
-        pd_tauff[15:] = tau_arm
+        # 5) 如果这一 tick 有上肢 command，就覆盖 pd_target 中的上肢部分
+        if arm_cmd is not None:
+            pd_target[15:] = arm_cmd
+            tau_arm = np.asarray(get_tauer(arm_cmd), dtype=np.float64).reshape(-1)
+            pd_tauff[15:] = tau_arm
 
-        with master.dual_hand_data_lock:
-            master.hand_shm_array[:] = hand
+        # 同样，如果这一 tick 有手的 command，就发给 hand
+        if hand_cmd is not None:
+            with master.dual_hand_data_lock:
+                master.hand_shm_array[:] = hand_cmd
 
+        # 6) 每个 90Hz tick 都要下到电机，不管有没有 VLA 新动作
         master.body_ctrl.ctrl_whole_body(
             pd_target[15:], pd_tauff[15:], pd_target[:15], pd_tauff[:15]
         )
 
         return pd_target
+    
     
 
 
