@@ -77,6 +77,8 @@ class BaseArmController:
         self.q_target = np.zeros(14)
         self.tauff_target = np.zeros(14)
 
+        
+
         # Control parameters
         self.kp_high = 200.0
         self.kd_high = 5.0
@@ -212,6 +214,7 @@ class BaseArmController:
 
             for idx, id in enumerate(self.JointArmIndex):
                 self.msg.motor_cmd[id].q = cliped_arm_q_target[idx]
+                # self.msg.motor_cmd[id].q = arm_q_target[idx]
                 self.msg.motor_cmd[id].dq = 0
                 self.msg.motor_cmd[id].tau = arm_tauff_target[idx]
 

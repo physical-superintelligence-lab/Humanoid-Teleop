@@ -12,6 +12,9 @@ from constants_vuer import tip_indices
 from robot_control.hand_retargeting import HandRetargeting, HandType
 from TeleVision import OpenTeleVision
 
+import threading
+import zmq
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
@@ -28,12 +31,125 @@ from constants_vuer import (
 )
 from motion_utils import fast_mat_inv, mat_update
 
-FREQ = 30
-DELAY = 1 / FREQ
+
+class ManusSkeletonReceiver:
+
+    def __init__(
+        self,
+        address="tcp://localhost:8000",
+        left_glove_sn="85ab6e24",
+        right_glove_sn="c152afa7",
+    ):
+        self.left_glove_sn = left_glove_sn
+        self.right_glove_sn = right_glove_sn
+
+        ctx = zmq.Context.instance()
+        self.socket = ctx.socket(zmq.PULL)
+
+        self.socket.setsockopt(zmq.CONFLATE, 1)
+        self.socket.connect(address)
+
+        self._lock = threading.Lock()
+        self._left_xyz = None   # shape (25,3)
+        self._right_xyz = None  # shape (25,3)
+        self._running = True
+
+        self._prev_left_xyz = None
+        self._prev_right_xyz = None
+
+
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+    
+
+    def _detect_activity(self):
+        # debug 左手
+        if self._prev_left_xyz is not None and self._left_xyz is not None:
+            diffs = np.linalg.norm(self._left_xyz - self._prev_left_xyz, axis=1)
+            print("LEFT diffs:", np.round(diffs, 4))  # 25 scalars
+        self._prev_left_xyz = None if self._left_xyz is None else self._left_xyz.copy()
+
+        # debug 右手
+        if self._prev_right_xyz is not None and self._right_xyz is not None:
+            diffs = np.linalg.norm(self._right_xyz - self._prev_right_xyz, axis=1)
+            # print("RIGHT diffs:", np.round(diffs, 4))
+        self._prev_right_xyz = None if self._right_xyz is None else self._right_xyz.copy()
+
+
+    def _parse_skeleton_176(self, data_176):
+        """
+        data_176: list[str]，长度 176，第 0 个是 SN，后面 175 个 float:
+        25 bones * (x,y,z,qx,qy,qz,qw) = 175
+        返回: xyz, shape = (25,3)
+        """
+        # data_176[0] 是序列号，用来区分左右手
+        floats = list(map(float, data_176[1:]))  # 175
+        arr = np.asarray(floats, dtype=np.float32).reshape(25, 7)
+        xyz = arr[:, :3]  # (25,3)
+        return xyz
+
+    def _loop(self):
+        while self._running:
+            try:
+                msg = self.socket.recv()  # 阻塞直到有一条最新
+            except zmq.error.ZMQError:
+                break
+
+            text = msg.decode("utf-8")
+            parts = text.split(",")
+
+            with self._lock:
+                if len(parts) == 176:
+                    sn = parts[0]
+                    xyz = self._parse_skeleton_176(parts)
+                    if sn == self.left_glove_sn:
+                        self._left_xyz = xyz
+                    elif sn == self.right_glove_sn:
+                        self._right_xyz = xyz
+
+                elif len(parts) == 352:
+                    # 左右手各 176
+                    left_parts = parts[0:176]
+                    right_parts = parts[176:352]
+                    left_sn = left_parts[0]
+                    right_sn = right_parts[0]
+                    left_xyz = self._parse_skeleton_176(left_parts)
+                    right_xyz = self._parse_skeleton_176(right_parts)
+
+                    # 不严格依赖 SN 顺序，按 SN 匹配
+                    if left_sn == self.left_glove_sn:
+                        self._left_xyz = left_xyz
+                    elif left_sn == self.right_glove_sn:
+                        self._right_xyz = left_xyz
+
+                    if right_sn == self.left_glove_sn:
+                        self._left_xyz = right_xyz
+                    elif right_sn == self.right_glove_sn:
+                        self._right_xyz = right_xyz
+                
+                # self._detect_activity()
+
+
+    def get_latest(self):
+        """在 Vuer 每帧 step() 里调用，拿到“当前一帧”的双手 xyz。"""
+        with self._lock:
+            if self._left_xyz is None or self._right_xyz is None:
+                return None, None
+            return self._left_xyz.copy(), self._right_xyz.copy()
+
+    def stop(self):
+        self._running = False
+        try:
+            self.socket.close(0)
+        except Exception:
+            pass
+
 
 
 class VuerPreprocessor:
-    def __init__(self):
+    def __init__(self, manus_receiver=None):
+        self.manus_receiver = manus_receiver
+
         self.vuer_head_mat = np.array(
             [[1, 0, 0, 0], [0, 1, 0, 1.5], [0, 0, 1, -0.2], [0, 0, 0, 1]]
         )
@@ -53,6 +169,27 @@ class VuerPreprocessor:
         self.vuer_left_wrist_mat = mat_update(
             self.vuer_left_wrist_mat, tv.left_hand.copy()
         )
+
+        if self.manus_receiver is not None:
+            manus_left, manus_right = self.manus_receiver.get_latest()
+        else:
+            manus_left, manus_right = None, None
+
+        if manus_left is not None and manus_right is not None:
+            # 使用 Manus 作为 finger point 源
+            left_landmarks = manus_left    # shape (25,3)
+            right_landmarks = manus_right  # shape (25,3)
+            # print("Using manus as finger tracking")
+            print(
+                "[MANUS raw tips] thumb", manus_left[24],
+                " index", manus_left[4],
+                " middle", manus_left[9],
+            )
+        else:
+            # 回退用 VP 原始 landmarks
+            left_landmarks = tv.left_landmarks.copy()
+            right_landmarks = tv.right_landmarks.copy()
+        
 
         # change of basis
         head_mat = grd_yup2grd_zup @ self.vuer_head_mat @ fast_mat_inv(grd_yup2grd_zup)
@@ -85,11 +222,14 @@ class VuerPreprocessor:
 
         # homogeneous
         left_hand_vuer_mat = np.concatenate(
-            [tv.left_landmarks.copy().T, np.ones((1, tv.left_landmarks.shape[0]))]
+            [left_landmarks.copy().T, np.ones((1, left_landmarks.shape[0]))]
         )
         right_hand_vuer_mat = np.concatenate(
-            [tv.right_landmarks.copy().T, np.ones((1, tv.right_landmarks.shape[0]))]
+            [right_landmarks.copy().T, np.ones((1, right_landmarks.shape[0]))]
         )
+
+        # print("LEFT landmarks shape:", left_landmarks.shape)
+        # print("RIGHT landmarks shape:", right_landmarks.shape)
 
         # change of basis
         left_hand_mat = T_robot_openxr @ left_hand_vuer_mat
@@ -100,8 +240,15 @@ class VuerPreprocessor:
 
         unitree_left_hand = (T_to_unitree_hand @ left_hand_mat_wb)[0:3, :].T
         unitree_right_hand = (T_to_unitree_hand @ right_hand_mat_wb)[0:3, :].T
+        # print("[After vr transforming] left hand:", unitree_left_hand.shape)
+
+        # unitree_left_hand = manus_left.copy()
+        # print("[No vr transforming] left hand:", unitree_left_hand.shape)
 
         unitree_tip_indices = [4, 9, 14]  # [thumb, index, middle] in OpenXR
+
+        # unitree_tip_indices = [24, 4, 9]  # [thumb, index, middle] in MANUS
+
 
         # Check if hand data is initialized
         left_q_target, right_q_target = None, None
@@ -206,6 +353,13 @@ class VuerTeleop:
         self.tv = OpenTeleVision(
             self.resolution_cropped, self.shm.name, image_queue, toggle_streaming
         )
+        self.manus_receiver = ManusSkeletonReceiver(
+            address="tcp://localhost:8000",
+            left_glove_sn="85ab6e24",
+            right_glove_sn="c152afa7",
+        )
+
+        # self.processor = VuerPreprocessor(manus_receiver=self.manus_receiver)
         self.processor = VuerPreprocessor()
 
         RetargetingConfig.set_default_urdf_dir("../assets")
@@ -243,3 +397,5 @@ class VuerTeleop:
         # self.shm.close()
         # self.shm.unlink()
         self.tv.shutdown()
+        if hasattr(self, "manus_receiver") and self.manus_receiver is not None:
+            self.manus_receiver.stop()

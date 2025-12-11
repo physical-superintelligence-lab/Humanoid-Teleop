@@ -87,9 +87,9 @@ policy = GrootRemotePolicy(args.host, args.port)
 
 #logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-TASK_INSTRUCTION = "fullbody/pick_up_dumpling_toy_and_squat_to_put_on_chair"
+TASK_INSTRUCTION = "fullbody/squat_to_pick_a_box_and_stand_to_put_on_desk"
 
-DATA_DIR = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_10"
+DATA_DIR = "data/g1_1001/Basic/squat_to_pick_a_box_and_stand_to_put_on_desk/episode_10"
 
 FREQ_VLA = 30      # InternVLA 请求频率
 FREQ_CTRL = 90    # 控制频率 (Hz)
@@ -122,8 +122,7 @@ def get_observation_with_gt(idx):
     frame = cv2.imread(img_name, cv2.IMREAD_COLOR)
     # frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    img = frame.astype(np.uint8)
-    return {"image": img}
+    return {"image": frame[None, :, :, :].astype(np.uint8)}
 
 
 def get_observation(camera):
@@ -191,7 +190,7 @@ def main():
             try:
                 # ============ 构造 obs（基于你的 websocket 模型要求） ============
                 # 1. 图像
-                # obs_img = get_observation_with_gt(step * 60)["image"]
+                # obs_img = get_observation_with_gt(step * 16)["image"]
                 obs_img = get_observation(camera)
 
                 # 2. 从控制线程共享的 state buffer 读取 motor + hand
@@ -376,7 +375,7 @@ def main():
         stabilize_thread.start()
         master.episode_kill_event.set()
         print("[MAIN] Initialize with standing pose...")
-        time.sleep(20)
+        time.sleep(40)
         master.episode_kill_event.clear()  # 停止站立控制，只留下面的控制线程写电机
 
         # 2. 启动双线程

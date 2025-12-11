@@ -26,6 +26,8 @@ sys.path.append(parent_dir)
 
 from constants import *
 
+CONTROL_DELAY = 1.0 / 60
+
 
 def quatToEuler(quat):
     eulerVec = np.zeros(3)
@@ -77,7 +79,6 @@ class RobotTaskmaster:
         # Controller parameters
         self.vx = 0.0
         self.vy = 0.0
-        self.yaw = 0.0
         self.vyaw = 0.0
 
         # AMO parameters
@@ -113,6 +114,11 @@ class RobotTaskmaster:
         self.demo_obs_template[self._n_demo_dof+6:self._n_demo_dof+9] = 0.75
         
         self.target_yaw = 0.0 
+        self.reset_yaw_offset = True
+        self.yaw_offset = 0.0
+        self.dyaw = 0.0
+
+        self.dt = 0.02
 
         self._in_place_stand_flag = True
         self.gait_cycle = np.array([0.25, 0.25])
@@ -158,6 +164,11 @@ class RobotTaskmaster:
         self.prev_torso_height = 0.75
         self.prev_arm = None
         self.prev_hand = None
+
+        self.prev_vx = 0.0
+        self.prev_vy = 0.0
+        self.prev_vyaw = 0.0
+        self.prev_dyaw = 0.0
         
         try:
             if robot == "g1":
@@ -251,6 +262,7 @@ class RobotTaskmaster:
         # logger.debug(f"Master: Process ID (PID) {os.getpid()}")
         try:
             stabilize_thread = threading.Thread(target=self.maintain_standing, daemon=True)
+            self.reset_yaw_offset = True 
             stabilize_thread.start()
             while not self.end_event.is_set():
                 logger.info("Master: waiting to start")
@@ -258,6 +270,7 @@ class RobotTaskmaster:
                 logger.info(
                     "Master: start event recvd. clearing start event. starting session"
                 )
+                self.reset_yaw_offset = True
                 self.run_session()
                 logger.debug("Master: merging data...")
                 if not self.failure_event.is_set():
@@ -280,13 +293,42 @@ class RobotTaskmaster:
 
 
 
-    def get_ik_observation(self):
+    def get_ik_observation(self, record=True):
         rpy = self.rpy
-        self.target_yaw = self.yaw
-        dyaw = rpy[2] - self.target_yaw
-        dyaw = np.remainder(dyaw + np.pi, 2 * np.pi) - np.pi
-        if self._in_place_stand_flag:
-            dyaw = 0.0
+
+        # if record:
+        #     self.target_yaw += self.vyaw * self.dt
+
+        #     dyaw = rpy[2] - self.yaw_offset - self.target_yaw
+        #     # dyaw = -self.vyaw
+        #     dyaw = np.remainder(dyaw + np.pi, 2 * np.pi) - np.pi
+        #     if self._in_place_stand_flag:
+        #         dyaw = 0.0
+            
+        #     self.dyaw = dyaw
+
+        if record:
+            if not hasattr(self, "last_vyaw"):
+                self.last_vyaw = 0.0
+
+            # 如果上一帧在旋转，这一帧停止旋转 → 触发 reset
+            turn_stopped = (abs(self.last_vyaw) > 0.05) and (abs(self.vyaw) < 0.05)
+            if turn_stopped:
+                # reset to align IMU yaw
+                self.target_yaw = self.rpy[2] - self.yaw_offset
+                # self.yaw_offset = rpy[2] - self.target_yaw
+
+            self.last_vyaw = self.vyaw
+
+            self.target_yaw += self.vyaw * self.dt
+
+            dyaw = rpy[2] - self.yaw_offset - self.target_yaw
+            dyaw = np.remainder(dyaw + np.pi, 2 * np.pi) - np.pi
+            if self._in_place_stand_flag:
+                dyaw = 0.0
+
+            self.dyaw = dyaw
+
 
         obs_idx = np.r_[0:19, 22:26] 
         obs_dof_vel = self.velstate[obs_idx]
@@ -315,8 +357,8 @@ class RobotTaskmaster:
         obs_prop = np.concatenate([
                     self.ang_vel * self.scales_ang_vel,
                     rpy[:2],
-                    (np.sin(dyaw),
-                    np.cos(dyaw)),
+                    (np.sin(self.dyaw),
+                    np.cos(self.dyaw)),
                     (obs_dof_pos - obs_default_dof_pos),
                     obs_dof_vel * self.scales_dof_vel,
                     obs_last_action,
@@ -377,12 +419,35 @@ class RobotTaskmaster:
             self.session_start_event.set()
             self.episode_kill_event.set()
 
-        self.vx = 0.5 * ly
-        self.vy = -0.5 * lx
+        # self.vx = 0.5 * ly
+        # self.vy = -0.5 * lx
 
-        self.vyaw = -rx
-        dt = 1.0 / 30.0
-        self.yaw += self.vyaw * dt
+        # self.vyaw = -0.5 * rx
+        # if rx >= 0.2:
+        #     self.vyaw = -0.25
+
+        # elif rx <= -0.2:
+        #     self.vyaw = 0.25
+        
+        # else:
+        #     self.vyaw = 0
+
+        def scale_vx(v):
+            a = abs(v)
+            if a < 0.1:
+                return 0
+            return (0.3 if a < 0.5 else 0.5) * (1 if v > 0 else -1)
+
+        # --- vy & vyaw: 0 / ±0.25 ---
+        def scale_small(v):
+            return 0 if abs(v) < 0.5 else 0.5 * (1 if v > 0 else -1)
+
+        # apply mapping
+        self.vx = scale_vx(ly)
+        self.vy = scale_small(-lx)
+        self.vyaw = scale_small(-rx)
+
+        # self.target_yaw += self.vyaw * self.dt
 
         # print("self.yaw:", self.yaw)
 
@@ -399,6 +464,13 @@ class RobotTaskmaster:
         self.quat = np.array(imustate.quaternion, dtype=np.float32)
         self.imu_rpy = np.array(imustate.rpy, dtype=np.float32)
         self.rpy = quatToEuler(self.quat)
+
+        imu_yaw = self.rpy[2]
+
+        if self.reset_yaw_offset:
+            self.yaw_offset = imu_yaw
+            self.reset_yaw_offset = False 
+
         self.ang_vel = np.array(imustate.gyroscope, dtype=np.float32)
 
         odomstate = self.body_ctrl.get_odom_data()
@@ -559,6 +631,7 @@ class RobotTaskmaster:
         logger.debug("Master: waiting for kill event")
         # self.arm_ctrl.set_weight_to_1()
         while not self.episode_kill_event.is_set():
+            start_time = time.time()
             logger.debug("Master: looping")
             current_lr_arm_q, current_lr_arm_dq = self.get_robot_data()
             motor_time = (
@@ -593,6 +666,12 @@ class RobotTaskmaster:
 
             self.last_action = np.concatenate([raw_action.copy(), (self.motorstate - self.default_dof_pos)[15:] / self.action_scale])
 
+            vx = self.vx
+            vy = self.vy
+            vyaw = self.vyaw
+
+            dyaw = self.dyaw
+
 
             ik_time = time.time()
 
@@ -623,7 +702,22 @@ class RobotTaskmaster:
                 right_pose,
                 new_h,
                 new_rpy,
+                vx,
+                vy,
+                vyaw,
+                dyaw
             )
+
+            end_time = time.time()
+
+            loop_time = end_time - start_time
+            delta_time = CONTROL_DELAY - loop_time
+            if delta_time > 0:
+                time.sleep(delta_time)
+            else:
+                print("Loop time takes too much:", loop_time)
+
+            # time.sleep(0.005)
         # self.arm_ctrl.gradually_set_weight_to_0()
 
     def stop(self):

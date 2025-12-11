@@ -403,7 +403,7 @@ class G1_29_BodyIK:
         qpos_new, h_new, rpy_new = self.multi_ik.solve(
                         q_pin_init,
                         {"left": targets["left"], "right": targets["right"], "head": targets["head"]},
-                        substeps=8,
+                        substeps=5,
                         h0=current_h, rpy0=current_rpy,
                     )
         
