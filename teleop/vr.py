@@ -12,6 +12,9 @@ from constants_vuer import tip_indices
 from teleop.robot_control.hand_retargeting import HandRetargeting, HandType
 from TeleVision import OpenTeleVision
 
+import threading
+import zmq
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
@@ -32,8 +35,172 @@ FREQ = 30
 DELAY = 1 / FREQ
 
 
+# class ManusErgoReceiver:
+#     def __init__(self, address="tcp://localhost:8001"):
+#         ctx = zmq.Context.instance()
+#         self.socket = ctx.socket(zmq.PULL)
+#         self.socket.setsockopt(zmq.CONFLATE, 1)
+#         self.socket.connect(address)
+
+#         self._left = None
+#         self._right = None
+#         self._lock = threading.Lock()
+#         self._running = True
+
+#         self._thread = threading.Thread(target=self._loop, daemon=True)
+#         self._thread.start()
+
+#     def _loop(self):
+#         while self._running:
+#             try:
+#                 msg = self.socket.recv()
+#             except zmq.error.ZMQError:
+#                 break
+
+#             parts = msg.decode("utf-8").split(",")
+#             if len(parts) != 40:
+#                 continue
+
+#             vals = np.array(list(map(float, parts)), dtype=np.float32)
+
+#             left = vals[0:20]
+#             right = vals[20:40]
+
+#             with self._lock:
+#                 self._left = left
+#                 self._right = right
+
+#     def get_latest(self):
+#         with self._lock:
+#             if self._left is None or self._right is None:
+#                 return None, None
+#             return self._left.copy(), self._right.copy()
+
+#     def stop(self):
+#         self._running = False
+#         try:
+#             self.socket.close()
+#         except:
+#             pass
+
+
+class ManusSkeletonReceiver:
+
+    def __init__(
+        self,
+        address="tcp://localhost:8000",
+        left_glove_sn="85ab6e24",
+        right_glove_sn="c152afa7",
+    ):
+        self.left_glove_sn = left_glove_sn
+        self.right_glove_sn = right_glove_sn
+
+        ctx = zmq.Context.instance()
+        self.socket = ctx.socket(zmq.PULL)
+
+        self.socket.setsockopt(zmq.CONFLATE, 1)
+        self.socket.connect(address)
+
+        self._lock = threading.Lock()
+        self._left_xyz = None   # shape (25,3)
+        self._right_xyz = None  # shape (25,3)
+        self._running = True
+
+        self._prev_left_xyz = None
+        self._prev_right_xyz = None
+
+
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+    
+
+    def _detect_activity(self):
+        # debug 左手
+        if self._prev_left_xyz is not None and self._left_xyz is not None:
+            diffs = np.linalg.norm(self._left_xyz - self._prev_left_xyz, axis=1)
+            print("LEFT diffs:", np.round(diffs, 4))  # 25 scalars
+        self._prev_left_xyz = None if self._left_xyz is None else self._left_xyz.copy()
+
+        # debug 右手
+        if self._prev_right_xyz is not None and self._right_xyz is not None:
+            diffs = np.linalg.norm(self._right_xyz - self._prev_right_xyz, axis=1)
+            # print("RIGHT diffs:", np.round(diffs, 4))
+        self._prev_right_xyz = None if self._right_xyz is None else self._right_xyz.copy()
+
+
+    def _parse_skeleton_176(self, data_176):
+        """
+        data_176: list[str]，长度 176，第 0 个是 SN，后面 175 个 float:
+        25 bones * (x,y,z,qx,qy,qz,qw) = 175
+        返回: xyz, shape = (25,3)
+        """
+        # data_176[0] 是序列号，用来区分左右手
+        floats = list(map(float, data_176[1:]))  # 175
+        arr = np.asarray(floats, dtype=np.float32).reshape(25, 7)
+        xyz = arr[:, :3]  # (25,3)
+        return xyz
+
+    def _loop(self):
+        while self._running:
+            try:
+                msg = self.socket.recv()  # 阻塞直到有一条最新
+            except zmq.error.ZMQError:
+                break
+
+            text = msg.decode("utf-8")
+            parts = text.split(",")
+
+            with self._lock:
+                if len(parts) == 176:
+                    sn = parts[0]
+                    xyz = self._parse_skeleton_176(parts)
+                    if sn == self.left_glove_sn:
+                        self._left_xyz = xyz
+                    elif sn == self.right_glove_sn:
+                        self._right_xyz = xyz
+
+                elif len(parts) == 352:
+                    # 左右手各 176
+                    left_parts = parts[0:176]
+                    right_parts = parts[176:352]
+                    left_sn = left_parts[0]
+                    right_sn = right_parts[0]
+                    left_xyz = self._parse_skeleton_176(left_parts)
+                    right_xyz = self._parse_skeleton_176(right_parts)
+
+                    # 不严格依赖 SN 顺序，按 SN 匹配
+                    if left_sn == self.left_glove_sn:
+                        self._left_xyz = left_xyz
+                    elif left_sn == self.right_glove_sn:
+                        self._right_xyz = left_xyz
+
+                    if right_sn == self.left_glove_sn:
+                        self._left_xyz = right_xyz
+                    elif right_sn == self.right_glove_sn:
+                        self._right_xyz = right_xyz
+                
+                # self._detect_activity()
+
+
+    def get_latest(self):
+        """在 Vuer 每帧 step() 里调用，拿到“当前一帧”的双手 xyz。"""
+        with self._lock:
+            if self._left_xyz is None or self._right_xyz is None:
+                return None, None
+            return self._left_xyz.copy(), self._right_xyz.copy()
+
+    def stop(self):
+        self._running = False
+        try:
+            self.socket.close(0)
+        except Exception:
+            pass
+
+
 class VuerPreprocessor:
-    def __init__(self):
+    def __init__(self, manus_receiver=None):
+        self.manus_receiver = manus_receiver
+
         self.vuer_head_mat = np.array(
             [[1, 0, 0, 0], [0, 1, 0, 1.5], [0, 0, 1, -0.2], [0, 0, 0, 1]]
         )
@@ -66,29 +233,63 @@ class VuerPreprocessor:
         rel_left_wrist_mat = (
             fast_mat_inv(head_mat) @ left_wrist_mat @ hand2inspire_l_arm
         )
-        # rel_left_wrist_mat[0:3, 3] = sensitivity * (
-        #     rel_left_wrist_mat[0:3, 3] - head_mat[0:3, 3]
-        # )
 
         rel_right_wrist_mat = (
             fast_mat_inv(head_mat) @ right_wrist_mat @ hand2inspire_r_arm
         )  # wTr = wTh @ hTr
-        # rel_right_wrist_mat[0:3, 3] = sensitivity * (
-        #     rel_right_wrist_mat[0:3, 3] - head_mat[0:3, 3]
-        # )
 
-        # head_rmat_inv = fast_mat_inv(head_mat)
-        # rel_right_wrist_mat[:3, :3] = (
-        #     head_rmat_inv[:3, :3] @ rel_right_wrist_mat[:3, :3]
-        # )
-        # rel_left_wrist_mat[:3, :3] = head_rmat_inv[:3, :3] @ rel_left_wrist_mat[:3, :3]
+        # Check if hand data is initialized
+        left_q_target, right_q_target = None, None
+        hand_retargeting = HandRetargeting(
+            HandType.UNITREE_DEX3
+        )  # TODO: add if to distinguish hand
+        # hand_retargeting = HandRetargeting(HandType.UNITREE_DEX3)
+
+
+        if self.manus_receiver is not None:
+            manus_left, manus_right = self.manus_receiver.get_latest()
+        else:
+            manus_left, manus_right = None, None
+
+        if manus_left is not None and manus_right is not None:
+            # Manus as finger point source
+            left_landmarks = manus_left.copy()   # shape (25,3)
+            right_landmarks = manus_right.copy()
+
+            # your discovered tip indices
+            tip_idx = [24, 5, 10]   # thumb, index, middle
+
+            ref_left  = left_landmarks[tip_idx]
+            ref_right = right_landmarks[tip_idx]
+
+            left_q_target = hand_retargeting.left_retargeting.retarget(ref_left)[
+                hand_retargeting.right_dex_retargeting_to_hardware
+            ]
+            right_q_target = hand_retargeting.right_retargeting.retarget(ref_right)[
+                hand_retargeting.right_dex_retargeting_to_hardware
+            ]
+
+            # return now—DO NOT continue to OpenXR finger processing!
+            return (
+                head_mat,
+                rel_left_wrist_mat,
+                rel_right_wrist_mat,
+                left_q_target,
+                right_q_target,
+            )
+            
+        else:
+            # Vision Pro
+            left_landmarks = tv.left_landmarks.copy()
+            right_landmarks = tv.right_landmarks.copy()
+
 
         # homogeneous
         left_hand_vuer_mat = np.concatenate(
-            [tv.left_landmarks.copy().T, np.ones((1, tv.left_landmarks.shape[0]))]
+            [left_landmarks.copy().T, np.ones((1, left_landmarks.shape[0]))]
         )
         right_hand_vuer_mat = np.concatenate(
-            [tv.right_landmarks.copy().T, np.ones((1, tv.right_landmarks.shape[0]))]
+            [right_landmarks.copy().T, np.ones((1, right_landmarks.shape[0]))]
         )
 
         # change of basis
@@ -103,12 +304,6 @@ class VuerPreprocessor:
 
         unitree_tip_indices = [4, 9, 14]  # [thumb, index, middle] in OpenXR
 
-        # Check if hand data is initialized
-        left_q_target, right_q_target = None, None
-        hand_retargeting = HandRetargeting(
-            HandType.UNITREE_DEX3
-        )  # TODO: add if to distinguish hand
-        # hand_retargeting = HandRetargeting(HandType.UNITREE_DEX3)
         if not np.all(left_hand_mat == 0.0):
             # Extract the relevant tip indices (assumed defined elsewhere)
             ref_left_value = unitree_left_hand[unitree_tip_indices].copy()
@@ -127,6 +322,9 @@ class VuerPreprocessor:
             left_q_target = hand_retargeting.left_retargeting.retarget(ref_left_value)[
                 hand_retargeting.right_dex_retargeting_to_hardware
             ]
+            # left_q_target = hand_retargeting.left_retargeting.retarget(ref_left_value)[
+            #     hand_retargeting.left_dex_retargeting_to_hardware
+            # ]
             right_q_target = hand_retargeting.right_retargeting.retarget(
                 ref_right_value
             )[hand_retargeting.right_dex_retargeting_to_hardware]
@@ -203,7 +401,12 @@ class VuerTeleop:
         self.tv = OpenTeleVision(
             self.resolution_cropped, self.shm.name, image_queue, toggle_streaming
         )
-        self.processor = VuerPreprocessor()
+        self.manus_receiver = ManusSkeletonReceiver(
+            address="tcp://localhost:8000",
+            left_glove_sn="85ab6e24",
+            right_glove_sn="c152afa7",
+        )
+        self.processor = VuerPreprocessor(manus_receiver=self.manus_receiver)
 
         RetargetingConfig.set_default_urdf_dir("../assets")
         with Path(config_file_path).open("r") as f:
