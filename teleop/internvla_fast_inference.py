@@ -20,7 +20,7 @@ TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the
 
 DATA_DIR = "data/g1_1001/Basic/squat_to_pick_a_box_and_stand_to_put_on_desk/episode_10"
 
-FREQ_CTRL = 90    # 控制频率 (Hz)
+FREQ_CTRL = 60    # 控制频率 (Hz)
 OBS_SEND_INTERVAL = 0.01  # 发送间隔约200Hz
 
 json_numpy.patch()
@@ -270,9 +270,13 @@ def main(server_url):
         arm_cmd = None
         hand_cmd = None
         if have_vla:
-            if action.shape[0] < 32:
+            if action.shape[0] < 36:
                 print("[CTRL] Invalid action shape:", action.shape)
             else:
+                vx = action[32]
+                vy = action[33]
+                vyaw = action[34]
+                dyaw = action[35]
                 rpyh   = action[28:32]
                 arm_cmd = action[14:28]
                 hand_cmd = action[:14]
@@ -282,10 +286,20 @@ def main(server_url):
                 master.torso_yaw    = rpyh[2]
                 master.torso_height = rpyh[3]
 
+                master.vx = vx
+                master.vy = vy
+                master.vyaw = vyaw
+                master.dyaw = dyaw
+
                 master.prev_torso_roll   = master.torso_roll
                 master.prev_torso_pitch  = master.torso_pitch
                 master.prev_torso_yaw    = master.torso_yaw
                 master.prev_torso_height = master.torso_height
+
+                master.prev_vx   = master.vx
+                master.prev_vy  = master.vy
+                master.prev_vyaw    = master.vyaw
+                master.prev_dyaw = master.dyaw
 
                 master.prev_arm = arm_cmd
                 master.prev_hand = hand_cmd
@@ -297,6 +311,11 @@ def main(server_url):
             master.torso_pitch  = master.prev_torso_pitch
             master.torso_yaw    = master.prev_torso_yaw
             master.torso_height = master.prev_torso_height
+
+            master.vx = master.prev_vx
+            master.vy = master.prev_vy
+            master.vyaw = master.prev_vyaw
+            master.dyaw = master.prev_dyaw
 
             arm_cmd = master.prev_arm
             hand_cmd = master.prev_hand

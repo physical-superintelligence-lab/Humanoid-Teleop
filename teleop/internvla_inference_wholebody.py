@@ -18,10 +18,10 @@ URL = "http://localhost:8014/act"  # 或 8080
 UNNORM_KEY = "humanoid_dataset/Grab_handle"
 TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
 
-DATA_DIR = "data/g1_1001/Basic/squat_to_pick_a_box_and_stand_to_put_on_desk/episode_10"
+# DATA_DIR = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10"
 
 FREQ_VLA = 30      # InternVLA 请求频率
-FREQ_CTRL = 90    # 控制频率 (Hz)
+FREQ_CTRL = 60    # 控制频率 (Hz)
 MAX_STEPS = 500
 
 ACTION_REPEAT = max(1, int(round(FREQ_CTRL / FREQ_VLA)))
@@ -180,9 +180,16 @@ def main():
         arm_cmd = None
         hand_cmd = None
         if have_vla:
-            if action.shape[0] < 32:
+            if action.shape[0] < 36:
                 print("[CTRL] Invalid action shape:", action.shape)
             else:
+
+                vx = action[32]
+                vy = action[33]
+                vyaw = action[34]
+                dyaw = action[35]
+
+
                 rpyh   = action[28:32]
                 arm_cmd = action[14:28]
                 hand_cmd = action[:14]
@@ -192,13 +199,25 @@ def main():
                 master.torso_yaw    = rpyh[2]
                 master.torso_height = rpyh[3]
 
+                master.vx = vx
+                master.vy = vy
+                master.vyaw = vyaw
+                master.dyaw = dyaw
+
                 master.prev_torso_roll   = master.torso_roll
                 master.prev_torso_pitch  = master.torso_pitch
                 master.prev_torso_yaw    = master.torso_yaw
                 master.prev_torso_height = master.torso_height
 
+                master.prev_vx   = master.vx
+                master.prev_vy  = master.vy
+                master.prev_vyaw    = master.vyaw
+                master.prev_dyaw = master.dyaw
+
                 master.prev_arm = arm_cmd
                 master.prev_hand = hand_cmd
+
+                # print("vx, vy, vyaw, dyaw:", master.vx, master.vy, master.vyaw, master.dyaw)
 
                 # print("action:", action)
         
@@ -210,9 +229,19 @@ def main():
 
             arm_cmd = master.prev_arm
             hand_cmd = master.prev_hand
+
+            master.vx = 0
+            master.vy = 0
+            master.vyaw = 0
+            master.dyaw = 0
+            # master.vx = master.prev_vx
+            # master.vy = master.prev_vy
+            # master.vyaw = master.prev_vyaw
+            # master.dyaw = master.prev_dyaw
         
-        print("torso_yaw:", master.torso_yaw)
-        print("torso_height:", master.torso_height)
+        # print("torso_yaw:", master.torso_yaw)
+        # print("torso_height:", master.torso_height)
+
 
 
         # 4) 无论有没有新 action，**都要跑 IK + whole-body control**
@@ -273,13 +302,8 @@ def main():
         stabilize_thread.start()
         master.episode_kill_event.set()
         print("[MAIN] Initialize with standing pose...")
-        for i in range(100):
-            start_time = time.time()
-            obs = get_observation(camera)
-            end_time = time.time()
-            print("get camera time:", end_time - start_time)
 
-        time.sleep(40)
+        time.sleep(30)
         master.episode_kill_event.clear()  # 停止站立控制，只留下面的控制线程写电机
 
         # 2. 启动双线程

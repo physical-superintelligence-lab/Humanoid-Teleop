@@ -52,7 +52,7 @@ def quatToEuler(quat):
 
 
 if __name__ == "__main__":
-    merged_file_path = "data/g1_1001/Basic/loco_manip/episode_2/data.json"
+    merged_file_path = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10/data.json"
     with open(merged_file_path, "r") as f:
         data_list = json.load(f)
 
