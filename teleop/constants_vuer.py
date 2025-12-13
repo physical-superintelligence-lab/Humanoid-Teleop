@@ -30,6 +30,10 @@ T_to_unitree_right_wrist = np.array(
 
 T_to_unitree_hand = np.array([[0, 0, 1, 0], [-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]])
 
+
+M_to_unitree_hand = np.array([[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0, 0, 0, 1]])
+
+
 T_robot_openxr = np.array([[0, 0, -1, 0], [-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
 
 

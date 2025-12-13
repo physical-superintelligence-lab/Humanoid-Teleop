@@ -22,6 +22,7 @@ sys.path.append(parent_dir)
 from constants_vuer import (
     T_robot_openxr,
     T_to_unitree_hand,
+    M_to_unitree_hand,
     grd_yup2grd_zup,
     hand2inspire,
     hand2inspire_l_arm,
@@ -212,6 +213,9 @@ class VuerPreprocessor:
             [[1, 0, 0, -0.5], [0, 1, 0, 1], [0, 0, 1, -0.5], [0, 0, 0, 1]]
         )
 
+        self.save_counter = 0
+        self.save_interval = 150
+
     def process(self, tv):
         self.vuer_head_mat = mat_update(self.vuer_head_mat, tv.head_matrix.copy())
         self.vuer_right_wrist_mat = mat_update(
@@ -256,11 +260,87 @@ class VuerPreprocessor:
             left_landmarks = manus_left.copy()   # shape (25,3)
             right_landmarks = manus_right.copy()
 
+            left_hand_vuer_mat = np.concatenate(
+                [left_landmarks.T, np.ones((1, left_landmarks.shape[0]))]
+            )
+            right_hand_vuer_mat = np.concatenate(
+                [right_landmarks.T, np.ones((1, right_landmarks.shape[0]))]
+            )
+
+            # === 核心修改：应用 T_to_unitree_hand 矩阵 ===
+            unitree_left_hand = (M_to_unitree_hand @ left_hand_vuer_mat)[0:3, :].T
+            unitree_right_hand = (M_to_unitree_hand @ right_hand_vuer_mat)[0:3, :].T
+
+            # if not hasattr(self, 'openxr_save_counter'):
+            #     self.openxr_save_counter = 0
+            #     self.openxr_save_interval = 150
+                
+            # self.openxr_save_counter += 1
+            # if self.openxr_save_counter >= self.openxr_save_interval:
+            #     self.openxr_save_counter = 0
+                
+            #     # 1. 创建索引列 (0 到 24)
+            #     # 索引的 dtype 应该与坐标点数据类型一致，这里假设是 float
+            #     indices = np.arange(unitree_left_hand.shape[0], dtype=unitree_left_hand.dtype).reshape(-1, 1)
+                
+            #     # 2. 拼接索引和 XYZ 坐标
+            #     # 结果 shape 将是 (25, 4)，结构为 [index, x, y, z]
+            #     data_to_save = np.hstack((indices, unitree_left_hand))
+                
+            #     timestamp = time.strftime("%Y%m%d_%H%M%S")
+            #     filename = f"manus_left_target_points_with_idx_{timestamp}.npy"
+                
+            #     np.save(filename, data_to_save.copy())
+            #     print(f"OpenXR Target Data Saved: {filename} (Shape: {data_to_save.shape})")
+
+
+
+            # if not hasattr(self, 'openxr_save_counter'):
+            #     self.openxr_save_counter = 0
+            #     self.openxr_save_interval = 150
+                
+            # self.openxr_save_counter += 1
+            # if self.openxr_save_counter >= self.openxr_save_interval:
+            #     self.openxr_save_counter = 0
+                
+            #     # 1. 创建索引列 (0 到 24)
+            #     # 索引的 dtype 应该与坐标点数据类型一致，这里假设是 float
+            #     indices = np.arange(unitree_left_hand.shape[0], dtype=unitree_left_hand.dtype).reshape(-1, 1)
+                
+            #     # 2. 拼接索引和 XYZ 坐标
+            #     # 结果 shape 将是 (25, 4)，结构为 [index, x, y, z]
+            #     data_to_save = np.hstack((indices, unitree_left_hand))
+                
+            #     timestamp = time.strftime("%Y%m%d_%H%M%S")
+            #     filename = f"openxr_target_points_with_idx_{timestamp}.npy"
+                
+            #     np.save(filename, data_to_save.copy())
+            #     print(f"OpenXR Target Data Saved: {filename} (Shape: {data_to_save.shape})")
+
+
+            
+
             # your discovered tip indices
             tip_idx = [24, 5, 10]   # thumb, index, middle
 
-            ref_left  = left_landmarks[tip_idx]
-            ref_right = right_landmarks[tip_idx]
+            # 注意: 使用 .copy() 确保后续操作不会修改 unitree_hand 数组本身
+            ref_left  = unitree_left_hand[tip_idx].copy()
+            ref_right = unitree_right_hand[tip_idx].copy()
+
+            # ref_left  = left_landmarks[tip_idx]  # 原始代码，已注释
+            # ref_right = right_landmarks[tip_idx] # 原始代码，已注释
+
+            # ref_left[:, 0] *= 1.35
+            # ref_left[:, 1] *= 1.05
+            # ref_left[:, 2] *= 0.95
+            ref_left[:, 0] *= 1.05
+            ref_left[:, 1] *= 0.95
+            ref_left[:, 2] *= 0.85
+
+            ref_right[:, 0] *= 1.05
+            ref_right[:, 1] *= 0.95
+            ref_right[:, 2] *= 0.85
+            # =================================================
 
             left_q_target = hand_retargeting.left_retargeting.retarget(ref_left)[
                 hand_retargeting.right_dex_retargeting_to_hardware
@@ -268,6 +348,8 @@ class VuerPreprocessor:
             right_q_target = hand_retargeting.right_retargeting.retarget(ref_right)[
                 hand_retargeting.right_dex_retargeting_to_hardware
             ]
+
+            # print("left_q_target:", left_q_target)
 
             # return now—DO NOT continue to OpenXR finger processing!
             return (
@@ -292,15 +374,48 @@ class VuerPreprocessor:
             [right_landmarks.copy().T, np.ones((1, right_landmarks.shape[0]))]
         )
 
+        # print("left_hand_vuer_mat.shape:", left_hand_vuer_mat.shape)
+
         # change of basis
         left_hand_mat = T_robot_openxr @ left_hand_vuer_mat
         right_hand_mat = T_robot_openxr @ right_hand_vuer_mat
 
+        # print("left_hand_mat.shape:", left_hand_mat.shape)
+
         left_hand_mat_wb = fast_mat_inv(left_wrist_mat) @ left_hand_mat
         right_hand_mat_wb = fast_mat_inv(right_wrist_mat) @ right_hand_mat
 
+        # print("left_hand_mat_wb.shape:", left_hand_mat_wb.shape)
+
         unitree_left_hand = (T_to_unitree_hand @ left_hand_mat_wb)[0:3, :].T
         unitree_right_hand = (T_to_unitree_hand @ right_hand_mat_wb)[0:3, :].T
+
+
+        # if not hasattr(self, 'openxr_save_counter'):
+        #     self.openxr_save_counter = 0
+        #     self.openxr_save_interval = 150
+            
+        # self.openxr_save_counter += 1
+        # if self.openxr_save_counter >= self.openxr_save_interval:
+        #     self.openxr_save_counter = 0
+            
+        #     # 1. 创建索引列 (0 到 24)
+        #     # 索引的 dtype 应该与坐标点数据类型一致，这里假设是 float
+        #     indices = np.arange(unitree_left_hand.shape[0], dtype=unitree_left_hand.dtype).reshape(-1, 1)
+            
+        #     # 2. 拼接索引和 XYZ 坐标
+        #     # 结果 shape 将是 (25, 4)，结构为 [index, x, y, z]
+        #     data_to_save = np.hstack((indices, unitree_left_hand))
+            
+        #     timestamp = time.strftime("%Y%m%d_%H%M%S")
+        #     filename = f"openxr_left_target_points_with_idx_{timestamp}.npy"
+            
+        #     np.save(filename, data_to_save.copy())
+        #     print(f"OpenXR Target Data Saved: {filename} (Shape: {data_to_save.shape})")
+        
+        # 26: 左手食指伸出  35： 完全伸出 
+
+        # print("unitree_left_hand.shape:", unitree_left_hand.shape)
 
         unitree_tip_indices = [4, 9, 14]  # [thumb, index, middle] in OpenXR
 
