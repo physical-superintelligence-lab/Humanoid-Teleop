@@ -232,12 +232,12 @@ def main():
 
             master.vx = 0
             master.vy = 0
-            master.vyaw = 0
-            master.dyaw = 0
+            # master.dyaw = 0
+            # master.vyaw = 0
             # master.vx = master.prev_vx
             # master.vy = master.prev_vy
-            # master.vyaw = master.prev_vyaw
-            # master.dyaw = master.prev_dyaw
+            master.vyaw = master.prev_vyaw
+            master.dyaw = master.prev_dyaw
         
         # print("torso_yaw:", master.torso_yaw)
         # print("torso_height:", master.torso_height)

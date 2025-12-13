@@ -135,7 +135,7 @@ class RTCWebSocketClient:
         """
         with pred_action_lock:
             pred_action_buffer["actions"] = action
-        print(f"[client] Executing action: shape={action.shape}, first_3={action.flatten()[:3]}")
+        # print(f"[client] Executing action: shape={action.shape}, first_3={action.flatten()[:3]}")
     
     def _on_open(self, ws):
         """WebSocket connection opened"""
@@ -251,6 +251,7 @@ class RTCWebSocketClient:
 # ---------------- 主逻辑 ----------------
 def main(server_url):
     # -------- 辅助：根据 action 构造并下发电机命令 --------
+    master.reset_yaw_offset = True
     def apply_action_from_buffer(last_pd_target):
         # 1) 每个控制周期都先读取机器人当前状态
         current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
@@ -304,7 +305,8 @@ def main(server_url):
                 master.prev_arm = arm_cmd
                 master.prev_hand = hand_cmd
 
-                # print("action:", action)
+                # print("vx, vy, vyaw, dyaw:", vx, vy, vyaw, dyaw)
+                print("dyaw:", dyaw)
         
         if not have_vla:
             master.torso_roll   = master.prev_torso_roll
@@ -320,8 +322,8 @@ def main(server_url):
             arm_cmd = master.prev_arm
             hand_cmd = master.prev_hand
         
-        print("torso_yaw:", master.torso_yaw)
-        print("torso_height:", master.torso_height)
+        # print("torso_yaw:", master.torso_yaw)
+        # print("torso_height:", master.torso_height)
 
 
         # 4) 无论有没有新 action，**都要跑 IK + whole-body control**
@@ -388,7 +390,7 @@ def main(server_url):
         stabilize_thread.start()
         master.episode_kill_event.set()
         print("[MAIN] Initialize with standing pose...")
-        time.sleep(40)
+        time.sleep(30)
         master.episode_kill_event.clear()  # 停止站立控制，只留下面的控制线程写电机
 
         # 2. 启动双线程
