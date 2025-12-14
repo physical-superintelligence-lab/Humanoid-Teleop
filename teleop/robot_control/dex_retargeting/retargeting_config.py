@@ -59,7 +59,7 @@ class RetargetingConfig:
     ignore_mimic_joint: bool = True
 
     # Low pass filter
-    low_pass_alpha: float = 0.1
+    low_pass_alpha: float = 0.05
 
     _TYPE = ["vector", "position", "dexpilot"]
     _DEFAULT_URDF_DIR = "./"

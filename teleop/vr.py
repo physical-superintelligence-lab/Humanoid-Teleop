@@ -271,29 +271,6 @@ class VuerPreprocessor:
             unitree_left_hand = (M_to_unitree_hand @ left_hand_vuer_mat)[0:3, :].T
             unitree_right_hand = (M_to_unitree_hand @ right_hand_vuer_mat)[0:3, :].T
 
-            # if not hasattr(self, 'openxr_save_counter'):
-            #     self.openxr_save_counter = 0
-            #     self.openxr_save_interval = 150
-                
-            # self.openxr_save_counter += 1
-            # if self.openxr_save_counter >= self.openxr_save_interval:
-            #     self.openxr_save_counter = 0
-                
-            #     # 1. 创建索引列 (0 到 24)
-            #     # 索引的 dtype 应该与坐标点数据类型一致，这里假设是 float
-            #     indices = np.arange(unitree_left_hand.shape[0], dtype=unitree_left_hand.dtype).reshape(-1, 1)
-                
-            #     # 2. 拼接索引和 XYZ 坐标
-            #     # 结果 shape 将是 (25, 4)，结构为 [index, x, y, z]
-            #     data_to_save = np.hstack((indices, unitree_left_hand))
-                
-            #     timestamp = time.strftime("%Y%m%d_%H%M%S")
-            #     filename = f"manus_left_target_points_with_idx_{timestamp}.npy"
-                
-            #     np.save(filename, data_to_save.copy())
-            #     print(f"OpenXR Target Data Saved: {filename} (Shape: {data_to_save.shape})")
-
-
 
             # if not hasattr(self, 'openxr_save_counter'):
             #     self.openxr_save_counter = 0
@@ -333,7 +310,7 @@ class VuerPreprocessor:
             # ref_left[:, 0] *= 1.35
             # ref_left[:, 1] *= 1.05
             # ref_left[:, 2] *= 0.95
-            ref_left[:, 0] *= 1.05
+            ref_left[:, 0] *= 2
             ref_left[:, 1] *= 0.95
             ref_left[:, 2] *= 0.85
 
