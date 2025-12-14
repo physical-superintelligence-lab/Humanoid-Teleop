@@ -304,19 +304,13 @@ class VuerPreprocessor:
             ref_left  = unitree_left_hand[tip_idx].copy()
             ref_right = unitree_right_hand[tip_idx].copy()
 
-            # ref_left  = left_landmarks[tip_idx]  # 原始代码，已注释
-            # ref_right = right_landmarks[tip_idx] # 原始代码，已注释
+            ref_left[0] *= 1.15
+            ref_left[1] *= 1.05
+            ref_left[2] *= 0.95
 
-            # ref_left[:, 0] *= 1.35
-            # ref_left[:, 1] *= 1.05
-            # ref_left[:, 2] *= 0.95
-            ref_left[:, 0] *= 2
-            ref_left[:, 1] *= 0.95
-            ref_left[:, 2] *= 0.85
-
-            ref_right[:, 0] *= 1.05
-            ref_right[:, 1] *= 0.95
-            ref_right[:, 2] *= 0.85
+            ref_right[0] *= 1.15
+            ref_right[1] *= 1.05
+            ref_right[2] *= 0.95
             # =================================================
 
             left_q_target = hand_retargeting.left_retargeting.retarget(ref_left)[
@@ -326,9 +320,7 @@ class VuerPreprocessor:
                 hand_retargeting.right_dex_retargeting_to_hardware
             ]
 
-            # print("left_q_target:", left_q_target)
 
-            # return now—DO NOT continue to OpenXR finger processing!
             return (
                 head_mat,
                 rel_left_wrist_mat,
@@ -341,7 +333,10 @@ class VuerPreprocessor:
             # Vision Pro
             left_landmarks = tv.left_landmarks.copy()
             right_landmarks = tv.right_landmarks.copy()
+        
 
+        left_landmarks = tv.left_landmarks.copy()
+        right_landmarks = tv.right_landmarks.copy()
 
         # homogeneous
         left_hand_vuer_mat = np.concatenate(
@@ -400,6 +395,7 @@ class VuerPreprocessor:
             # Extract the relevant tip indices (assumed defined elsewhere)
             ref_left_value = unitree_left_hand[unitree_tip_indices].copy()
             ref_right_value = unitree_right_hand[unitree_tip_indices].copy()
+
 
             # Apply scaling factors to calibrate the values
             ref_left_value[0] *= 1.15

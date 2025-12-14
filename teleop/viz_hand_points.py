@@ -111,10 +111,10 @@ def visualize_keypoints(filename, tip_indices):
 
 
 # --- 使用你的文件进行可视化 ---
-# filename = 'manus_left_target_points_with_idx_20251212_162116.npy'
-# unitree_tip_indices = [24, 5, 10] 
+filename = 'manus_left_target_points_with_idx_20251212_162116.npy'
+unitree_tip_indices = [24, 5, 10] 
 
-filename = 'openxr_left_target_points_with_idx_20251212_151135.npy'
-unitree_tip_indices = [4, 9, 14] 
+# filename = 'openxr_left_target_points_with_idx_20251212_151135.npy'
+# unitree_tip_indices = [4, 9, 14] 
 
 visualize_keypoints(filename, unitree_tip_indices)
