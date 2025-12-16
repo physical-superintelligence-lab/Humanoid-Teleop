@@ -19,7 +19,7 @@ import tyro
 from typing import Optional
 from helpers import RequestMessage, ResponseMessage
 import requests
-
+from gr00t.eval.robot import RobotInferenceClient
 logger = logging.getLogger(__name__)
 
 
@@ -63,7 +63,6 @@ class GrootRemotePolicy:
             print(f"Error sending request: {e}")
             return None
 
-
 @dataclasses.dataclass
 class Args:
     """Command line arguments."""
@@ -71,7 +70,7 @@ class Args:
     # Host and port to connect to the server.
     host: str = "0.0.0.0"
     # Port to connect to the server. If None, the server will use the default port.
-    port: Optional[int] = 8000
+    port: Optional[int] = 5555
 
     api_key: Optional[str] = None
     # Number of steps to run the policy for.
@@ -83,11 +82,15 @@ class Args:
 
 args = Args()
 
-policy = GrootRemotePolicy(args.host, args.port)
+#policy = GrootRemotePolicy(args.host, args.port)
+
+policy = RobotInferenceClient(host=args.host, port=args.port)
+#modality_cfg = policy.get_modality_config()
+
 
 #logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-TASK_INSTRUCTION = "fullbody/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair"
+TASK_INSTRUCTION = "whole-body/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair"
 
 DATA_DIR = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10"
 
@@ -125,13 +128,68 @@ def get_observation_with_gt(idx):
     return {"image": frame[None, :, :, :].astype(np.uint8)}
 
 
-def get_observation(camera):
+def get_observation(camera, state):
     frame = camera.get_frame()
     #frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = frame.astype(np.uint8)
 
-    return frame[None, :, :, :].astype(np.uint8)
+    # obs = {
+    #     "video.rs_view": frame[None, :, :, :].astype(np.uint8),
+    #     "state.vy": np.array(state["vy"], dtype=np.float64),
+    #     "state.vx": np.array(state["vx"], dtype=np.float64),
+    #     "state.vyaw": np.array(state["vyaw"], dtype=np.float64),
+    #     "state.dyaw": np.array(state["dyaw"], dtype=np.float64),
+    #     "state.left_arm": np.array(state["left_arm"], dtype=np.float64),
+    #     "state.right_arm": np.array(state["right_arm"], dtype=np.float64),
+    #     "state.right_hand": np.array(state["right_hand"], dtype=np.float64),
+    #     "state.rpy": np.array(state["rpy"], dtype=np.float64),
+    #     "state.height": np.array(state["height"], dtype=np.float64),
+    #     "annotation.human.task_description": TASK_INSTRUCTION
+    # }
+    obs = {
+        # video: (1, H, W, 3)
+        "video.rs_view": frame[None, :, :, :].astype(np.uint8),
+
+        # scalar states → (1, 1)
+        "state.vy":    np.array([[state["vy"]]], dtype=np.float64),
+        "state.vx":    np.array([[state["vx"]]], dtype=np.float64),
+        "state.vyaw":  np.array([[state["vyaw"]]], dtype=np.float64),
+        "state.dyaw":  np.array([[state["dyaw"]]], dtype=np.float64),
+        "state.height": np.array([[state["height"]]], dtype=np.float64)[0],
+
+        # vector states → (1, dim)
+        "state.left_arm":  np.array(state["left_arm"], dtype=np.float64)[None, :],
+        "state.right_arm": np.array(state["right_arm"], dtype=np.float64)[None, :],
+        "state.right_hand": np.array(state["right_hand"], dtype=np.float64)[None, :],
+        "state.rpy": np.array(state["rpy"], dtype=np.float64)[None, :],
+
+        # annotation → (1,)
+        "annotation.human.task_description": np.array(
+            [TASK_INSTRUCTION], dtype=np.string_
+        ),
+    }
+    # obs = {}
+    # obs["video.ego_view"][:] = frame[None].astype(np.uint8)
+
+    # obs["state.vx"][:] = [[state["vx"]]]
+    # obs["state.vy"][:] = [[state["vy"]]]
+    # obs["state.vyaw"][:] = [[state["vyaw"]]]
+    # obs["state.dyaw"][:] = [[state["dyaw"]]]
+    # obs["state.height"][:] = [[state["height"]]]
+
+    # obs["state.left_arm"][:] = np.asarray(state["left_arm"], dtype=np.float64)[None, :]
+    # obs["state.right_arm"][:] = np.asarray(state["right_arm"], dtype=np.float64)[None, :]
+    # obs["state.right_hand"][:] = np.asarray(state["right_hand"], dtype=np.float64)[None, :]
+    # obs["state.rpy"][:] = np.asarray(state["rpy"], dtype=np.float64)[None, :]
+
+    # obs["annotation.human.task_description"][:] = np.array(
+    #     [TASK_INSTRUCTION], dtype=np.string_
+    # )
+    # print(obs)
+
+
+    return obs
 
 
 # ---------------- 主逻辑 ----------------
@@ -190,8 +248,8 @@ def main():
             try:
                 # ============ 构造 obs（基于你的 websocket 模型要求） ============
                 # 1. 图像
-                obs_img = get_observation_with_gt(step * 16)["image"]
-                # obs_img = get_observation(camera)
+                #obs_img = get_observation_with_gt(step * 16)["image"]
+                #obs_img = get_observation(camera)
 
                 # 2. 从控制线程共享的 state buffer 读取 motor + hand
                 with state_lock:
@@ -210,20 +268,36 @@ def main():
 
                 # websocket obs payload
                 state = {
+                    "vx": master.prev_vx,
+                    "vy": master.prev_vy,
+                    "vyaw": master.prev_vyaw,
+                    "dyaw": master.prev_dyaw,
+                    "rpy": np.array([
+                        master.torso_roll,
+                        master.torso_pitch,
+                        master.torso_yaw,
+                    ], dtype=np.float32),
+                    "height": np.array([master.torso_height], dtype=np.float32),
                     "left_arm": arm_joints[0:7],
                     "right_arm": arm_joints[7:14],
-                    "left_hand": hand_joints[0:7],
                     "right_hand": hand_joints[7:14],
                 }
+                obs = get_observation(camera, state)
 
-                result = policy.pred_action(image=obs_img, state=state, instruction=TASK_INSTRUCTION)
+                # result = policy.pred_action(image=obs_img, state=state, instruction=TASK_INSTRUCTION)
+                actions = policy.get_action(obs)
+                
+                keys = ["action.vx", "action.vy", "action.vyaw", "action.dyaw", "action.height", "action.rpy", "action.left_arm", "action.right_arm", "action.right_hand"]
+                actions = np.concatenate([actions[k] for k in keys], axis=1)
+                assert actions.shape == (16,29), f"expecting actions.shape = (16, 29), found {actions.shape}"
+
                 
 
                 # 返回格式假设为 {"actions": N×32 matrix}
-                actions = np.array(result, dtype=float)
-                if len(actions.shape) != 2:
-                    print("[VLA] invalid sequence:", actions.shape)
-                    continue
+                #actions = np.array(result, dtype=float)
+                # if len(actions.shape) != 2:
+                #     print("[VLA] invalid sequence:", actions.shape)
+                #     continue
 
                 # 写入 action buffer
                 with pred_action_lock:
@@ -288,7 +362,13 @@ def main():
                 # 注意这里的切片要和你训练时的 layout 一致
                 vx = action[0]
                 vy = action[1]
-                vyaw = action[2]
+                #vx = 0
+                #vy = 0
+                #vyaw = action[2]
+                vyaw_candidates = [-0.5, 0.0]
+                vyaw = min(vyaw_candidates, key=lambda v: abs(v - action[2]))
+               # vyaw=0
+
                 dyaw = action[3]
                 rpyh   = action[4:8]
                 arm_cmd = action[8:22]
@@ -331,7 +411,7 @@ def main():
 
             master.vx = 0
             master.vy = 0
-            master.vyaw = 0
+            master.vyaw = master.prev_vyaw
             master.dyaw = master.prev_dyaw
         
         # print("torso_yaw:", master.torso_yaw)
@@ -395,7 +475,7 @@ def main():
         stabilize_thread.start()
         master.episode_kill_event.set()
         print("[MAIN] Initialize with standing pose...")
-        time.sleep(40)
+        time.sleep(25)
         master.episode_kill_event.clear()  # 停止站立控制，只留下面的控制线程写电机
 
         # 2. 启动双线程

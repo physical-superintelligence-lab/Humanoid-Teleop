@@ -307,12 +307,13 @@ class RobotTaskmaster:
             
         #     self.dyaw = dyaw
 
-        if record:
-            if not hasattr(self, "last_vyaw"):
-                self.last_vyaw = 0.0
+        if not hasattr(self, "last_vyaw"):
+            self.last_vyaw = 0.0
 
-            # 如果上一帧在旋转，这一帧停止旋转 → 触发 reset
-            turn_stopped = (abs(self.last_vyaw) > 0.05) and (abs(self.vyaw) < 0.05)
+        # 如果上一帧在旋转，这一帧停止旋转 → 触发 reset
+        turn_stopped = (abs(self.last_vyaw) > 0.05) and (abs(self.vyaw) < 0.05)
+
+        if record:
             if turn_stopped:
                 # reset to align IMU yaw
                 self.target_yaw = self.rpy[2] - self.yaw_offset
@@ -328,6 +329,11 @@ class RobotTaskmaster:
                 dyaw = 0.0
 
             self.dyaw = dyaw
+        
+        else:
+            if turn_stopped or self._in_place_stand_flag:
+                self.dyaw = 0
+
 
 
         obs_idx = np.r_[0:19, 22:26] 
