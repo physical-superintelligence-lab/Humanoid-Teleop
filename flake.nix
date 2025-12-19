@@ -42,14 +42,9 @@
             pkgs.cyclonedds
           ];
           shellHook = ''
-            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH
+            export NIX_LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH
             export CMAKE_PREFIX_PATH=${pkgs.pcl}/share/pcl-1.14:${pkgs.eigen}/share/eigen3/cmake:${pkgs.boost}/share/boost/cmake:${pkgs.opencv}/lib/cmake/opencv4:$CMAKE_PREFIX_PATH
             export CYCLONEDDS_URI="<CycloneDDS><Domain><General><NetworkInterfaceAddress>192.168.123.123</NetworkInterfaceAddress></General></Domain></CycloneDDS>"
-            set -e
-            eval "$(micromamba shell hook --shell zsh)"
-            micromamba activate tv
-            # micromamba install --yes -f environment.yaml -c conda-forge
-            set +e
           '';
         };
       }
