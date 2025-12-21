@@ -320,6 +320,8 @@ class VuerPreprocessor:
                 hand_retargeting.right_dex_retargeting_to_hardware
             ]
 
+            print("left_target:", left_q_target)
+
 
             return (
                 head_mat,
