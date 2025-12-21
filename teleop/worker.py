@@ -12,10 +12,10 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 import zmq
-
-from utils.logger import logger
 from vr import VuerTeleop
 from writers import AsyncImageWriter, AsyncWriter
+
+from utils.logger import logger
 
 # from turbojpeg import TJPF_BGR, TurboJPEG
 
@@ -106,6 +106,7 @@ class TeleoperatorProcess:
 class RobotDataWorker:
     def __init__(self, shared_data, robot_shm_array, teleop_shm_array, robot="h1"):
         self.robot = robot
+        self.modality = Modality(self.robot)
         self.shared_data = shared_data
         self.kill_event = shared_data["kill_event"]
         self.session_start_event = shared_data["session_start_event"]
@@ -227,104 +228,76 @@ class RobotDataWorker:
 
         return rgb_array, ir_array, depth_array
 
-    def extract_usable(self, row):
-        """
-        Extract usable pressure readings from a row using fixed index patterns.
-
-        Pattern:
-          - Type A row: if the first element is valid (not 0 or 30000), use indices [0, 2, 9, 11]
-          - Type B row: if the first element is waste but index 3 is valid, use indices [3, 6, 8]
-          - Otherwise, return None (i.e. the row contains no usable data)
-        """
-        # Check if the row is completely waste
-        if all(val in (0.0, 30000.0) for val in row):
-            return None, None
-
-        # Type A: valid if the first element is not a waste value
-        if row[0] not in (0.0, 30000.0):
-            usable = [row[i] for i in [0, 2, 9, 11]]
-            sensor_type = "A"
-        # Type B: use alternative fixed indices if index 3 is valid
-        elif row[3] not in (0.0, 30000.0):
-            usable = [row[i] for i in [3, 6, 8]]
-            sensor_type = "B"
-        else:
-            # No valid data found based on fixed positions
-            return None, None
-
-        return sensor_type, usable
+    # def extract_usable(self, row):
+    #     if all(val in (0.0, 30000.0) for val in row):
+    #         return None, None
+    #
+    #     if row[0] not in (0.0, 30000.0):
+    #         usable = [row[i] for i in [0, 2, 9, 11]]
+    #         sensor_type = "A"
+    #     elif row[3] not in (0.0, 30000.0):
+    #         usable = [row[i] for i in [3, 6, 8]]
+    #         sensor_type = "B"
+    #     else:
+    #         return None, None
+    #
+    #     return sensor_type, usable
 
     def format_pressure_data(self, data):
-        sensors = []
-        for idx, row in enumerate(data, start=1):
-            sensor_type, readings = self.extract_usable(row)
-            if readings is not None:
-                sensors.append(
-                    {
-                        "sensor_id": idx,
-                        "sensor_type": sensor_type,
-                        "usable_readings": readings,
-                    }
-                )
-        return sensors
+        # sensors = []
+        # for idx, row in enumerate(data, start=1):
+        #     sensor_type, readings = self.extract_usable(row)
+        #     if readings is not None:
+        #         sensors.append(
+        #             {
+        #                 "sensor_id": idx,
+        #                 "sensor_type": sensor_type,
+        #                 "usable_readings": readings,
+        #             }
+        #         )
+        return data
+
+    def _get_modality_slice(self, robot_data, modality_name):
+        start_idx = self.modality.get_start_index(modality_name)
+        end_idx = self.modality.get_end_index(modality_name)
+        return robot_data[start_idx:end_idx]
 
     def get_robot_data(self, time_curr):
         logger.debug(f"worker: starting to get robot data")
         # with self.h1_lock:
         robot_data = self.robot_shm_array.copy()
 
-        # Define starting indices for each data section
-        if self.robot == "h1":
-            robot_sizes = H1_sizes
-        elif self.robot == "g1":
-            robot_sizes = G1_sizes
-
-        leg_start = 0
-        arm_start = robot_sizes.LEG_STATE_SIZE
-        hand_start = arm_start + robot_sizes.ARM_STATE_SIZE
-        imu_start = hand_start + robot_sizes.HAND_STATE_SIZE
-
-        # Extract individual components
-        legstate = robot_data[leg_start:arm_start]
-        armstate = robot_data[arm_start:hand_start]
-        handstate = robot_data[hand_start:imu_start]
-
-        # Extract IMU data
-        imu_accelerometer_start = imu_start + robot_sizes.IMU_QUATERNION_SIZE
-        imu_gyroscope_start = (
-            imu_accelerometer_start + robot_sizes.IMU_ACCELEROMETER_SIZE
-        )
-        imu_rpy_start = imu_gyroscope_start + robot_sizes.IMU_GYROSCOPE_SIZE
-        imu_rpy_end = imu_rpy_start + robot_sizes.IMU_RPY_SIZE
-
+        legstate = self._get_modality_slice(robot_data, "leg")
+        armstate = self._get_modality_slice(robot_data, "arm")
+        handstate = self._get_modality_slice(robot_data, "hand")
 
         imustate = {
-            "quaternion": robot_data[imu_start:imu_accelerometer_start].tolist(),
-            "accelerometer": robot_data[
-                imu_accelerometer_start:imu_gyroscope_start
-            ].tolist(),
-            "gyroscope": robot_data[imu_gyroscope_start:imu_rpy_start].tolist(),
-            "rpy": robot_data[imu_rpy_start:imu_rpy_end].tolist(),
+            "quaternion": self._get_modality_slice(
+                robot_data, "imu_quaternion"
+            ).tolist(),
+            "accelerometer": self._get_modality_slice(
+                robot_data, "imu_accelerometer"
+            ).tolist(),
+            "gyroscope": self._get_modality_slice(
+                robot_data, "imu_gyroscope"
+            ).tolist(),
+            "rpy": self._get_modality_slice(robot_data, "imu_rpy").tolist(),
         }
-        
-        # Extract ODOM data
-        odom_velocity_start = imu_rpy_end + robot_sizes.ODOM_POSITION_SIZE
-        odom_rpy_start = odom_velocity_start + robot_sizes.ODOM_VELOCITY_SIZE
-        odom_quat_start = odom_rpy_start + robot_sizes.ODOM_RPY_SIZE
-        odom_quat_end = odom_quat_start + robot_sizes.ODOM_QUATERNION_SIZE
 
         odomstate = {
-            "position": robot_data[imu_rpy_end:odom_velocity_start].tolist(),
-            "velocity": robot_data[odom_velocity_start:odom_rpy_start].tolist(),
-            "rpy": robot_data[odom_rpy_start:odom_quat_start].tolist(),
-            "quat": robot_data[odom_quat_start:odom_quat_end].tolist(),
+            "position": self._get_modality_slice(
+                robot_data, "odom_position"
+            ).tolist(),
+            "velocity": self._get_modality_slice(
+                robot_data, "odom_velocity"
+            ).tolist(),
+            "rpy": self._get_modality_slice(robot_data, "odom_rpy").tolist(),
+            "quat": self._get_modality_slice(robot_data, "odom_quaternion").tolist(),
         }
 
         pressure_state = None
-        if self.robot == "g1":
-            pressure_state = robot_data[
-                imu_rpy_end : imu_rpy_end + robot_sizes.HAND_PRESS_SIZE
-            ]
+        if self.modality.has_modality("hand_press"):
+            pressure_state = self._get_modality_slice(robot_data, "hand_press")
 
         robot_data = {
             "time": time_curr,
@@ -334,7 +307,11 @@ class RobotDataWorker:
                 "leg_state": legstate.tolist(),
                 "hand_state": handstate.tolist(),
                 "hand_pressure_state": (
-                    self.format_pressure_data(pressure_state.reshape(18, 12).tolist())
+                    self.format_pressure_data(
+                        pressure_state.reshape(
+                            18, 12
+                        ).tolist()
+                    )
                     if pressure_state is not None
                     else None
                 ),
