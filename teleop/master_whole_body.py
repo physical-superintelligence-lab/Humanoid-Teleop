@@ -6,7 +6,7 @@ import traceback
 from collections import deque
 from multiprocessing import (Array, Event, Lock, Manager, Process, Queue,
                              shared_memory)
-
+import csv
 import mujoco
 import numpy as np
 import torch
@@ -19,6 +19,9 @@ from robot_control.robot_hand_unitree import Dex3_1_Controller
 from utils.logger import logger
 from writers import IKDataWriter
 from robot_control.compute_tau import GetTauer
+
+from scipy.spatial.transform import Rotation
+
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -169,6 +172,15 @@ class RobotTaskmaster:
         self.prev_vy = 0.0
         self.prev_vyaw = 0.0
         self.prev_dyaw = 0.0
+
+        # self.tau_history = []
+        # self.tau_log_path = f"tau_log_{int(time.time())}.csv"
+        # self.tau_file = open(self.tau_log_path, mode='w', newline='')
+        # self.tau_writer = csv.writer(self.tau_file)
+        
+        # self.tau_writer.writerow(['t', 'tau_22', 'tau_23', 'tau_24', 'tau_25', 'tau_26', 'tau_27', 'tau_28'])
+
+        # self.start_time = time.time()
         
         try:
             if robot == "g1":
@@ -314,14 +326,12 @@ class RobotTaskmaster:
         turn_stopped = (abs(self.last_vyaw) > 0.05) and (abs(self.vyaw) < 0.05)
 
         if record:
+            self.target_yaw += self.vyaw * self.dt
             if turn_stopped:
                 # reset to align IMU yaw
                 self.target_yaw = self.rpy[2] - self.yaw_offset
-                # self.yaw_offset = rpy[2] - self.target_yaw
 
             self.last_vyaw = self.vyaw
-
-            self.target_yaw += self.vyaw * self.dt
 
             dyaw = rpy[2] - self.yaw_offset - self.target_yaw
             dyaw = np.remainder(dyaw + np.pi, 2 * np.pi) - np.pi
@@ -412,6 +422,13 @@ class RobotTaskmaster:
         self.velstate = velstate
         logger.debug(f"motorstate f{motorstate}")
 
+        # taustate = self.body_ctrl.get_current_motor_tau_est()
+    
+        # last_seven = taustate[-7:]
+        
+        # timestamp = time.time() - self.start_time
+        # self.tau_writer.writerow([timestamp] + list(last_seven))
+
         controllerstate = self.body_ctrl.remote_controller
         lx = controllerstate.lx
         ly = controllerstate.ly
@@ -484,10 +501,10 @@ class RobotTaskmaster:
         self.odom_pos = odomstate["position"]
         self.odom_vel = odomstate["velocity"]
 
-        self.torso_height = self.odom_pos[2]
-        self.torso_roll = self.rpy[0]
-        self.torso_pitch = self.rpy[1]
-        self.torso_yaw = self.rpy[2]
+        # self.torso_height = self.odom_pos[2]
+        # self.torso_roll = self.rpy[0]
+        # self.torso_pitch = self.rpy[1]
+        # self.torso_yaw = self.rpy[2]
 
 
         # var_imu = dir(imustate)
@@ -636,9 +653,20 @@ class RobotTaskmaster:
         last_pd_target = None
         logger.debug("Master: waiting for kill event")
         # self.arm_ctrl.set_weight_to_1()
+        self.reset_yaw_offset = False
+        self.target_yaw = 0.0  
+        self.dyaw = 0.0 
+        self.vx = 0.0 
+        self.vy = 0.0
+        self.vyaw = 0.0
+        
+        is_first_frame = True
         while not self.episode_kill_event.is_set():
             start_time = time.time()
             logger.debug("Master: looping")
+            if is_first_frame:
+                self.reset_yaw_offset = True
+                is_first_frame = False
             current_lr_arm_q, current_lr_arm_dq = self.get_robot_data()
             motor_time = (
                 time.time()
@@ -657,14 +685,36 @@ class RobotTaskmaster:
             current_h = self.torso_height
             current_rpy = np.array([self.torso_roll, self.torso_pitch, self.torso_yaw], dtype=np.float64)
 
+            # new_h, new_rpy = self.body_ik.solve_lower_ik(
+            #     self.motorstate, self.odom_pos, self.quat, left_pose, right_pose, head_rmat, current_h, current_rpy
+            # )
+
+            continuous_rot = Rotation.from_euler('xyz', [current_rpy[0], current_rpy[1], current_rpy[2]])
+            continuous_quat_xyzw = continuous_rot.as_quat()  # [x, y, z, w]
+            continuous_quat_wxyz = np.array([
+                continuous_quat_xyzw[3],  # w
+                continuous_quat_xyzw[0],  # x
+                continuous_quat_xyzw[1],  # y
+                continuous_quat_xyzw[2]   # z
+            ])
+
             new_h, new_rpy = self.body_ik.solve_lower_ik(
-                self.motorstate, self.odom_pos, self.quat, left_pose, right_pose, head_rmat, current_h, current_rpy
+                self.motorstate, self.odom_pos, continuous_quat_wxyz, 
+                left_pose, right_pose, head_rmat, current_h, current_rpy
             )
+
 
             self.torso_height = new_h
             self.torso_roll = new_rpy[0]
             self.torso_pitch = new_rpy[1]
+
+            # yaw_diff = new_rpy[2] - current_rpy[2]
+            # yaw_diff = np.remainder(yaw_diff + np.pi, 2 * np.pi) - np.pi
+            # new_rpy[2] = current_rpy[2] + yaw_diff 
+
             self.torso_yaw = new_rpy[2]
+
+
 
             self.get_ik_observation()
 
@@ -677,6 +727,7 @@ class RobotTaskmaster:
             vyaw = self.vyaw
 
             dyaw = self.dyaw
+
 
 
             ik_time = time.time()
@@ -761,6 +812,10 @@ class RobotTaskmaster:
         self.robot_shm_array[:] = 0
 
         self.ik_writer = IKDataWriter(self.shared_data["dirname"])
+
+        # if hasattr(self, 'tau_file'):
+        #     self.tau_file.close()
+        #     print(f"Tau data saved to {self.tau_log_path}")
 
         logger.info("RobotTaskmaster has been reset and is ready to start again.")
 

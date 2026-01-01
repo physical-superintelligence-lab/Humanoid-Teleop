@@ -173,13 +173,22 @@ class BaseBodyController:
 
     def _setup_motor_params(self):
         """Set up motor parameters based on motor type."""
+        # self.stiffness = np.array([
+        #     150, 150, 150, 300, 80, 20,
+        #     150, 150, 150, 300, 80, 20,
+        #     400, 400, 400,
+        #     100, 100, 100, 100, 30, 30, 30,
+        #     100, 100, 100, 100, 30, 30, 30,
+        # ])
+
         self.stiffness = np.array([
             150, 150, 150, 300, 80, 20,
             150, 150, 150, 300, 80, 20,
             400, 400, 400,
-            100, 100, 100, 100, 30, 30, 30,
-            100, 100, 100, 100, 30, 30, 30,
+            50, 50, 50, 50, 30, 30, 30,
+            50, 50, 50, 50, 30, 30, 30,
         ])
+        
         self.damping = np.array([
             2, 2, 2, 4, 2, 1,
             2, 2, 2, 4, 2, 1,
@@ -209,6 +218,7 @@ class BaseBodyController:
                 for id in range(self.num_motors):
                     lowstate.motor_state[id].q = msg.motor_state[id].q
                     lowstate.motor_state[id].dq = msg.motor_state[id].dq
+                    lowstate.motor_state[id].tau_est = msg.motor_state[id].tau_est
                 
                 if hasattr(msg, "wireless_remote"):
                     self.remote_controller.set(msg.wireless_remote)
@@ -225,6 +235,8 @@ class BaseBodyController:
 
     def _ctrl_motor_state(self):
         """Thread to send control commands to motors."""
+        SPECIFIC_MAX_TORQUE = 10.0
+        
         while not self.stop_event.is_set():
             start_time = time.time()
 
@@ -288,6 +300,13 @@ class BaseBodyController:
                 for id in self.JointIndex
             ]
         )
+
+    def get_current_motor_tau_est(self):
+        """Return current state tau_est of all body motors."""
+        return np.array(
+            [self.lowstate_buffer.GetData().motor_state[id].tau_est for id in self.JointIndex]
+        )
+    
 
     def get_imu_data(self):
         """Get IMU data from the robot."""

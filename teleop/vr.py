@@ -19,6 +19,14 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
+
+########################
+# INPUT YOUR HEIGHT HERE!
+########################
+# TELEOPERATOR_HEIGHT = 1.74
+TELEOPERATOR_HEIGHT = 1.90
+height_offset = 1.88 - TELEOPERATOR_HEIGHT
+
 from constants_vuer import (
     T_robot_openxr,
     T_to_unitree_hand,
@@ -162,13 +170,30 @@ class VuerPreprocessor:
         )
 
     def process(self, tv):
-        self.vuer_head_mat = mat_update(self.vuer_head_mat, tv.head_matrix.copy())
+        head_mat = mat_update(self.vuer_head_mat, tv.head_matrix.copy())
+        # if head_mat is not None and self.y_offset is None:
+        #     current_y = head_mat[1, 3]
+        #     if not np.allclose(current_y, 0): 
+        #         self.y_offset = self.target_height - current_y
+        #         print(f"Height Calibrated! Original Head Y: {current_y:.3f}, Offset: {self.y_offset:.3f}")
+        
+        # height_offset = self.y_offset if self.y_offset is not None else 0.0
+
+        if head_mat is not None:
+            head_mat[1, 3] += height_offset
+        
+
+        self.vuer_head_mat = head_mat
+
         self.vuer_right_wrist_mat = mat_update(
             self.vuer_right_wrist_mat, tv.right_hand.copy()
         )
+        self.vuer_right_wrist_mat[1, 3] += height_offset
+
         self.vuer_left_wrist_mat = mat_update(
             self.vuer_left_wrist_mat, tv.left_hand.copy()
         )
+        self.vuer_left_wrist_mat[1, 3] += height_offset
 
         if self.manus_receiver is not None:
             manus_left, manus_right = self.manus_receiver.get_latest()
@@ -189,6 +214,8 @@ class VuerPreprocessor:
             # 回退用 VP 原始 landmarks
             left_landmarks = tv.left_landmarks.copy()
             right_landmarks = tv.right_landmarks.copy()
+            left_landmarks[:, 1] += height_offset
+            right_landmarks[:, 1] += height_offset
         
 
         # change of basis
