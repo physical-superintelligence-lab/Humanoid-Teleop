@@ -25,6 +25,7 @@ repeat = 2
 control_dt = DELAY / 2
 
 
+
 def quatToEuler(quat):
     eulerVec = np.zeros(3)
     qw = quat[0] 
@@ -52,7 +53,7 @@ def quatToEuler(quat):
 
 
 if __name__ == "__main__":
-    merged_file_path = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10/data.json"
+    merged_file_path = "data/g1_1001/Basic/Test/episode_18/data.json"
     with open(merged_file_path, "r") as f:
         data_list = json.load(f)
 
@@ -93,7 +94,7 @@ if __name__ == "__main__":
             # rpy = data_list[i]["states"]["imu"]["rpy"]
             # quat = data_list[i]["states"]["imu"]["quaternion"]
             # rpy = quatToEuler(quat)
-            rpy = data_list[i]["actions"]["torso_rpy"]
+            torso_rpy = data_list[i]["actions"]["torso_rpy"]
             # master.torso_height = data_list[i]["states"]["odometry"]["position"][2]
             height = data_list[i]["actions"]["torso_height"]
 
@@ -101,6 +102,7 @@ if __name__ == "__main__":
             vy = data_list[i]["actions"]["torso_vy"]
             vyaw = data_list[i]["actions"]["torso_vyaw"]
             dyaw = data_list[i]["actions"]["torso_dyaw"]
+            target_yaw = data_list[i]["actions"]["target_yaw"]
 
             hand_poseList = data_list[i]["states"]["hand_state"]
             #hand_poseList =  data_list[i]["actions"]["left_angles"] + data_list[i]["actions"]["right_angles"]
@@ -117,16 +119,18 @@ if __name__ == "__main__":
                 current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
 
                 master.torso_height = height
-                master.torso_roll = rpy[0]
-                master.torso_pitch = rpy[1]
-                master.torso_yaw = rpy[2]
+                master.torso_roll = torso_rpy[0]
+                master.torso_pitch = torso_rpy[1]
+                master.torso_yaw = torso_rpy[2]
 
                 master.vx = vx
                 master.vy = vy
                 master.vyaw = vyaw
-                master.dyaw = dyaw
+                # master.dyaw = dyaw
+                master.target_yaw = target_yaw
 
                 master.get_ik_observation(record=False)
+                # master.get_ik_observation()
 
                 pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(
                     left_wrist=None,

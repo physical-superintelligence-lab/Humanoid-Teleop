@@ -89,6 +89,7 @@ class IKDataWriter:
         vy, 
         vyaw,
         dyaw,
+        target_yaw,
     ):
         entry = {
             "right_angles": right_angles.tolist(),
@@ -106,6 +107,7 @@ class IKDataWriter:
             "torso_vy": vy,
             "torso_vyaw": vyaw,
             "torso_dyaw": dyaw,
+            "target_yaw": target_yaw,
         }
         self.async_writer.write(json.dumps(entry))
 

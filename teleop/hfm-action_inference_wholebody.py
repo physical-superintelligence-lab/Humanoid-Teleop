@@ -16,7 +16,9 @@ import zmq
 # ---------------- 配置 ----------------
 URL = "http://localhost:8014/act"  # 或 8080
 UNNORM_KEY = "humanoid_dataset/Grab_handle"
-TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
+# TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
+# TASK_INSTRUCTION = "Put toys into box and lift it and turn and put on the chair."
+TASK_INSTRUCTION = "Pick the dumpling toy, turn around, walk forward, squat, and put the toy on the chair."
 
 # DATA_DIR = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10"
 
@@ -230,6 +232,8 @@ def main():
                 vyaw = action[34]
                 dyaw = action[35]
 
+                vx = 0.35 if vx > 0.1 else 0
+
 
                 rpyh   = action[28:32]
                 arm_cmd = action[14:28]
@@ -278,10 +282,12 @@ def main():
             # master.vx = master.prev_vx
             # master.vy = master.prev_vy
             master.vyaw = master.prev_vyaw
+            # master.vyaw = 0
             master.dyaw = master.prev_dyaw
         
         # print("torso_yaw:", master.torso_yaw)
         # print("torso_height:", master.torso_height)
+        print("dyaw:", master.dyaw)
 
 
 

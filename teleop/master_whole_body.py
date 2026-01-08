@@ -224,7 +224,7 @@ class RobotTaskmaster:
         self.ik_writer = None
         self.running = False
         # self.h1_lock = Lock()
-
+        self._idx = 0
     
     
 
@@ -319,19 +319,64 @@ class RobotTaskmaster:
             
         #     self.dyaw = dyaw
 
-        if not hasattr(self, "last_vyaw"):
-            self.last_vyaw = 0.0
+        # if not hasattr(self, "last_vyaw"):
+        #     self.last_vyaw = 0.0
 
+        # # 如果上一帧在旋转，这一帧停止旋转 → 触发 reset
+        # turn_stopped = (abs(self.last_vyaw) > 0.05) and (abs(self.vyaw) < 0.05)
+        # if turn_stopped:
+        #     print("last_vyaw, current vyaw:", self.last_vyaw, self.vyaw)
+
+        # if self._idx == 10*50:
+        #     self.reset_yaw_offset = True
+
+        # if self._idx > 10*50 and self._idx < 13 * 50:
+        #     self.vyaw = -0.524
+        # elif self._idx > 13 * 50 and self._idx < 26 * 50:
+        #     self.vx = 0.35
+        # elif self._idx > 26 * 50 and self._idx < 29 * 50:
+        #     self.vyaw = 0.3
+        
         # 如果上一帧在旋转，这一帧停止旋转 → 触发 reset
-        turn_stopped = (abs(self.last_vyaw) > 0.05) and (abs(self.vyaw) < 0.05)
+        # turn_stopped = (abs(self.last_vyaw) > 0.05) and (abs(self.vyaw) < 0.05)
+
+        # self._idx += 1
+        # self.last_vyaw = self.vyaw
+        
+
 
         if record:
             self.target_yaw += self.vyaw * self.dt
-            if turn_stopped:
-                # reset to align IMU yaw
-                self.target_yaw = self.rpy[2] - self.yaw_offset
+            
+            # if turn_stopped:
+            #     # reset to align IMU yaw
+            #     print("turn stopped, current_yaw:", self.target_yaw)
+            #     self.target_yaw = self.rpy[2] - self.yaw_offset
+            #     print("target_yaw reset to:", self.target_yaw)
+            #     print("rpy[2]:", self.rpy[2], "yaw_offset:", self.yaw_offset)
 
-            self.last_vyaw = self.vyaw
+            # self.last_vyaw = self.vyaw
+
+            # self.target_yaw += self.vyaw * self.dt
+
+            dyaw = rpy[2] - self.yaw_offset - self.target_yaw
+            dyaw = np.remainder(dyaw + np.pi, 2 * np.pi) - np.pi
+
+
+            if self._in_place_stand_flag:
+                dyaw = 0.0
+
+            self.dyaw = dyaw
+        
+        else:
+            # self.last_vyaw = self.vyaw
+            # if turn_stopped or self._in_place_stand_flag:
+            #     self.dyaw = 0
+            # if turn_stopped:
+            #     # reset to align IMU yaw
+            #     self.target_yaw = self.rpy[2] - self.yaw_offset
+
+            # self.last_vyaw = self.vyaw
 
             dyaw = rpy[2] - self.yaw_offset - self.target_yaw
             dyaw = np.remainder(dyaw + np.pi, 2 * np.pi) - np.pi
@@ -339,10 +384,6 @@ class RobotTaskmaster:
                 dyaw = 0.0
 
             self.dyaw = dyaw
-        
-        else:
-            if turn_stopped or self._in_place_stand_flag:
-                self.dyaw = 0
 
 
 
@@ -456,19 +497,24 @@ class RobotTaskmaster:
         #     self.vyaw = 0
 
         def scale_vx(v):
-            a = abs(v)
-            if a < 0.1:
-                return 0
-            return (0.3 if a < 0.5 else 0.5) * (1 if v > 0 else -1)
+            return 0 if abs(v) < 0.3 else 0.35 * (1 if v > 0 else -1)
+
+        def scale_vy(v):
+            # return 0 if abs(v) < 0.3 else 0.35 * (1 if v > 0 else -1)
+            return 0 if abs(v) < 0.7 else 0.5 * (1 if v > 0 else -1)
+
 
         # --- vy & vyaw: 0 / ±0.25 ---
-        def scale_small(v):
-            return 0 if abs(v) < 0.5 else 0.5 * (1 if v > 0 else -1)
+        def scale_vyaw(v):
+            if abs(v) < 0.2:
+                return 0
+            return (0.3 if abs(v) < 0.5 else 0.5) * (1 if v > 0 else -1)
+            # return 0 if abs(v) < 0.5 else 0.5 * (1 if v > 0 else -1)
 
         # apply mapping
         self.vx = scale_vx(ly)
-        self.vy = scale_small(-lx)
-        self.vyaw = scale_small(-rx)
+        self.vy = scale_vy(-lx)
+        self.vyaw = scale_vyaw(-rx)
 
         # self.target_yaw += self.vyaw * self.dt
 
@@ -487,6 +533,7 @@ class RobotTaskmaster:
         self.quat = np.array(imustate.quaternion, dtype=np.float32)
         self.imu_rpy = np.array(imustate.rpy, dtype=np.float32)
         self.rpy = quatToEuler(self.quat)
+        # print("robot_yaw:", self.rpy[2])
 
         imu_yaw = self.rpy[2]
 
@@ -604,6 +651,8 @@ class RobotTaskmaster:
                     # print("rpy:", self.torso_roll, self.torso_pitch, self.torso_yaw)
                     # print("height:", self.torso_height)
                     self.get_ik_observation()
+
+                    self._idx = 0
 
                     # print("observation:", self.observation)
                     # print("extra_history:", self.extra_hist)
@@ -728,6 +777,8 @@ class RobotTaskmaster:
 
             dyaw = self.dyaw
 
+            target_yaw = self.target_yaw
+
 
 
             ik_time = time.time()
@@ -762,7 +813,8 @@ class RobotTaskmaster:
                 vx,
                 vy,
                 vyaw,
-                dyaw
+                dyaw,
+                target_yaw,
             )
 
             end_time = time.time()
