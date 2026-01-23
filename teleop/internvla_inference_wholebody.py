@@ -187,7 +187,10 @@ def main():
                 vx = action[32]
                 vy = action[33]
                 vyaw = action[34]
-                dyaw = action[35]
+                target_yaw = action[35]
+
+                vx = 0.35 if vx > 0.25 else 0
+                vy = 0 if abs(vy) < 0.3 else 0.5 * (1 if vy > 0 else -1)
 
 
                 rpyh   = action[28:32]
@@ -202,7 +205,7 @@ def main():
                 master.vx = vx
                 master.vy = vy
                 master.vyaw = vyaw
-                master.dyaw = dyaw
+                master.target_yaw = target_yaw
 
                 master.prev_torso_roll   = master.torso_roll
                 master.prev_torso_pitch  = master.torso_pitch
@@ -212,7 +215,7 @@ def main():
                 master.prev_vx   = master.vx
                 master.prev_vy  = master.vy
                 master.prev_vyaw    = master.vyaw
-                master.prev_dyaw = master.dyaw
+                master.prev_target_yaw = master.target_yaw
 
                 master.prev_arm = arm_cmd
                 master.prev_hand = hand_cmd
@@ -230,14 +233,17 @@ def main():
             arm_cmd = master.prev_arm
             hand_cmd = master.prev_hand
 
-            master.vx = 0
+            master.vx = master.prev_vx
+            # master.vx = 0
             master.vy = 0
             # master.dyaw = 0
             # master.vyaw = 0
             # master.vx = master.prev_vx
             # master.vy = master.prev_vy
             master.vyaw = master.prev_vyaw
-            master.dyaw = master.prev_dyaw
+            # master.vyaw = 0
+            # master.dyaw = master.prev_dyaw
+            master.target_yaw = master.prev_target_yaw
         
         # print("torso_yaw:", master.torso_yaw)
         # print("torso_height:", master.torso_height)
@@ -245,7 +251,7 @@ def main():
 
 
         # 4) 无论有没有新 action，**都要跑 IK + whole-body control**
-        master.get_ik_observation()
+        master.get_ik_observation(record=False)
 
 
         pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(

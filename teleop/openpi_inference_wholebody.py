@@ -29,7 +29,7 @@ class Args:
     # Host and port to connect to the server.
     host: str = "0.0.0.0"
     # Port to connect to the server. If None, the server will use the default port.
-    port: Optional[int] = 8000
+    port: Optional[int] = 9000
 
     api_key: Optional[str] = None
     # Number of steps to run the policy for.
@@ -49,12 +49,16 @@ policy = _websocket_client_policy.WebsocketClientPolicy(
 
 logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-TASK_INSTRUCTION = "fullbody/pick_up_dumpling_toy_and_squat_to_put_on_chair"
+TASK_INSTRUCTION = "g1/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water"
 
-DATA_DIR = "data/g1_1001/Basic/pick_up_dumpling_toy_and_squat_to_put_on_chair/episode_10"
+DATA_DIR = "data/g1_1001/Basic/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water/episode_18/"
+merged_file_path = "data/g1_1001/Basic/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water/episode_18/data.json"
+
+with open(merged_file_path, "r") as f:
+    data_list = json.load(f)
 
 FREQ_VLA = 30      # InternVLA 请求频率
-FREQ_CTRL = 90    # 控制频率 (Hz)
+FREQ_CTRL = 60    # 控制频率 (Hz)
 MAX_STEPS = 500
 
 ACTION_REPEAT = max(1, int(round(FREQ_CTRL / FREQ_VLA)))
@@ -77,6 +81,16 @@ class RSCamera:
 
 
 # ---------------- 工具函数 ----------------
+# def get_observation_with_gt(idx):
+#     img_name = os.path.join(DATA_DIR, "color", f"frame_{idx:06d}.jpg")
+#     if not os.path.exists(img_name):
+#         raise FileNotFoundError(f"Image not found: {img_name}")
+#     frame = cv2.imread(img_name, cv2.IMREAD_COLOR)
+#     # frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
+#     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#     img = frame.astype(np.uint8)
+#     return {"image": img}
+
 def get_observation_with_gt(idx):
     img_name = os.path.join(DATA_DIR, "color", f"frame_{idx:06d}.jpg")
     if not os.path.exists(img_name):
@@ -85,17 +99,26 @@ def get_observation_with_gt(idx):
     # frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = frame.astype(np.uint8)
-    return {"image": img}
+    arm_poseList = data_list[idx]["states"]["arm_state"]
+    hand_poseList = data_list[idx]["states"]["hand_state"]
+    img_obs = {
+        "image": img,
+    }
+    state_obs = {
+        "arm_joints": np.array(arm_poseList),
+        "hand_joints": np.array(hand_poseList),
+    }
+    return img_obs, state_obs
 
 
 def get_observation(camera):
     frame = camera.get_frame()
-    frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
+    # frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = frame.astype(np.uint8)
 
     obs = {
-        "image": frame,
+        "image": img,
     }
     return obs
 
@@ -177,9 +200,10 @@ def main():
                 # websocket obs payload
                 obs_payload = {
                     "observation/image": obs_img,
-                    "observation/arm_joints": arm_joints,
-                    "observation/hand_joints": hand_joints,
-                    "observation/leg_joints": leg_joints,
+                    # "observation/arm_joints": arm_joints,
+                    # "observation/hand_joints": hand_joints,
+                    # "observation/leg_joints": leg_joints,
+                    "states": np.concatenate([hand_joints, arm_joints]),
                     "prompt": TASK_INSTRUCTION
                 }
 
@@ -249,23 +273,44 @@ def main():
         arm_cmd = None
         hand_cmd = None
         if have_vla:
-            if action.shape[0] < 32:
+            if action.shape[0] < 36:
                 print("[CTRL] Invalid action shape:", action.shape)
             else:
-                # 注意这里的切片要和你训练时的 layout 一致
-                rpyh   = action[:4]
-                arm_cmd = action[4:18]
-                hand_cmd = action[18:32]
+                vx = action[32]
+                vy = action[33]
+                vyaw = action[34]
+                # dyaw = action[35]
+                target_yaw = action[35]
 
-                master.torso_roll   = rpyh[1]
-                master.torso_pitch  = rpyh[2]
-                master.torso_yaw    = rpyh[3]
-                master.torso_height = rpyh[0]
+                # vx = 0.35 if vx > 0.25 else 0
+                # vy = 0 if abs(vy) < 0.3 else 0.5 * (1 if vy > 0 else -1)
+
+
+                rpyh   = action[28:32]
+                arm_cmd = action[14:28]
+                hand_cmd = action[:14]
+
+                master.torso_roll   = rpyh[0]
+                master.torso_pitch  = rpyh[1]
+                master.torso_yaw    = rpyh[2]
+                master.torso_height = rpyh[3]
+
+                master.vx = vx
+                master.vy = vy
+                master.vyaw = vyaw
+                # master.dyaw = dyaw
+                master.target_yaw = target_yaw
 
                 master.prev_torso_roll   = master.torso_roll
                 master.prev_torso_pitch  = master.torso_pitch
                 master.prev_torso_yaw    = master.torso_yaw
                 master.prev_torso_height = master.torso_height
+
+                master.prev_vx   = master.vx
+                master.prev_vy  = master.vy
+                master.prev_vyaw    = master.vyaw
+                # master.prev_dyaw = master.dyaw
+                master.prev_target_yaw = master.target_yaw
 
                 master.prev_arm = arm_cmd
                 master.prev_hand = hand_cmd
@@ -280,13 +325,16 @@ def main():
 
             arm_cmd = master.prev_arm
             hand_cmd = master.prev_hand
+
+            master.vx = master.prev_vx
+            master.vy = 0
+            master.vyaw = master.prev_vyaw
+            master.target_yaw = master.prev_target_yaw
         
-        print("torso_yaw:", master.torso_yaw)
-        print("torso_height:", master.torso_height)
 
 
         # 4) 无论有没有新 action，**都要跑 IK + whole-body control**
-        master.get_ik_observation()
+        master.get_ik_observation(record=False)
 
 
         pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(
@@ -343,7 +391,7 @@ def main():
         stabilize_thread.start()
         master.episode_kill_event.set()
         print("[MAIN] Initialize with standing pose...")
-        time.sleep(20)
+        time.sleep(30)
         master.episode_kill_event.clear()  # 停止站立控制，只留下面的控制线程写电机
 
         # 2. 启动双线程

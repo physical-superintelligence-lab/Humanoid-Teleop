@@ -1,76 +1,33 @@
 import os
 import time
 import threading
-import json
 import cv2
 import numpy as np
-import requests
-from multiprocessing import Array, Event
-from master_whole_body import RobotTaskmaster
-from robot_control.compute_tau import GetTauer
-import zmq
 import dataclasses
-import enum
 import logging
 import pathlib
-import rich
-import tqdm
+import sys
+import requests
+import zmq
 import tyro
 from typing import Optional
+from multiprocessing import Array, Event
+
+
+from master_whole_body import RobotTaskmaster
+from robot_control.compute_tau import GetTauer
 from helpers import RequestMessage, ResponseMessage
-import requests
-from gr00t.eval.robot import RobotInferenceClient
 logger = logging.getLogger(__name__)
 
-
-class GrootRemotePolicy:
-    def __init__(self, host, port):
-        self.url = f"http://{host}:{port}"
-
-    def pred_action(self, image, state, instruction):
-        gt_action = None
-        dataset_paths = []
-
-        request = RequestMessage(
-            image=image,
-            instruction=instruction,
-            history={},
-            state=state,
-            condition={},
-            gt_action=np.array([]) if gt_action is None else gt_action,
-            dataset_name=dataset_paths[0] if dataset_paths else "test",
-            timestamp="sample_-1",
-        )
-
-        print("\n4. Sending request to server...")
-        try:
-            start_time = time.time()
-            response = requests.post(
-                f"{self.url}/act",
-                json=request.serialize(),
-                timeout=60.0,
-            )
-            elapsed = time.time() - start_time
-
-            response.raise_for_status()
-            response_data = response.json()
-            response_msg = ResponseMessage.deserialize(response_data)
-            pred_action = np.array(response_msg.action)
-
-            return pred_action
-
-        except Exception as e:
-            print(f"Error sending request: {e}")
-            return None
 
 @dataclasses.dataclass
 class Args:
     """Command line arguments."""
 
     # Host and port to connect to the server.
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     # Port to connect to the server. If None, the server will use the default port.
-    port: Optional[int] = 5555
+    port: Optional[int] = 8003
 
     api_key: Optional[str] = None
     # Number of steps to run the policy for.
@@ -80,17 +37,12 @@ class Args:
     # Environment to run the policy in.
     # env: EnvMode = EnvMode.ALOHA_SIM
 
-args = Args()
+args = tyro.cli(Args)
+SERVER_URL = f"http://{args.host}:{args.port}"
+VIDEO_KEY = "rs_view"
 
-#policy = GrootRemotePolicy(args.host, args.port)
-
-policy = RobotInferenceClient(host=args.host, port=args.port)
-#modality_cfg = policy.get_modality_config()
-
-
-#logger.info(f"Server metadata: {policy.get_server_metadata()}")
-
-TASK_INSTRUCTION = "whole-body/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair"
+#TASK_INSTRUCTION = "whole-body/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair"
+TASK_INSTRUCTION = "whole-body/pick_box_turn_raw"
 
 DATA_DIR = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10"
 
@@ -130,66 +82,47 @@ def get_observation_with_gt(idx):
 
 def get_observation(camera, state):
     frame = camera.get_frame()
-    #frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    img = frame.astype(np.uint8)
-
-    # obs = {
-    #     "video.rs_view": frame[None, :, :, :].astype(np.uint8),
-    #     "state.vy": np.array(state["vy"], dtype=np.float64),
-    #     "state.vx": np.array(state["vx"], dtype=np.float64),
-    #     "state.vyaw": np.array(state["vyaw"], dtype=np.float64),
-    #     "state.dyaw": np.array(state["dyaw"], dtype=np.float64),
-    #     "state.left_arm": np.array(state["left_arm"], dtype=np.float64),
-    #     "state.right_arm": np.array(state["right_arm"], dtype=np.float64),
-    #     "state.right_hand": np.array(state["right_hand"], dtype=np.float64),
-    #     "state.rpy": np.array(state["rpy"], dtype=np.float64),
-    #     "state.height": np.array(state["height"], dtype=np.float64),
-    #     "annotation.human.task_description": TASK_INSTRUCTION
-    # }
-    obs = {
-        # video: (1, H, W, 3)
-        "video.rs_view": frame[None, :, :, :].astype(np.uint8),
-
-        # scalar states → (1, 1)
-        "state.vy":    np.array([[state["vy"]]], dtype=np.float64),
-        "state.vx":    np.array([[state["vx"]]], dtype=np.float64),
-        "state.vyaw":  np.array([[state["vyaw"]]], dtype=np.float64),
-        "state.dyaw":  np.array([[state["dyaw"]]], dtype=np.float64),
-        "state.height": np.array([[state["height"]]], dtype=np.float64)[0],
-
-        # vector states → (1, dim)
-        "state.left_arm":  np.array(state["left_arm"], dtype=np.float64)[None, :],
-        "state.right_arm": np.array(state["right_arm"], dtype=np.float64)[None, :],
-        "state.right_hand": np.array(state["right_hand"], dtype=np.float64)[None, :],
-        "state.rpy": np.array(state["rpy"], dtype=np.float64)[None, :],
-
-        # annotation → (1,)
-        "annotation.human.task_description": np.array(
-            [TASK_INSTRUCTION], dtype=np.string_
-        ),
+    height = float(state["height"][0]) if isinstance(state["height"], np.ndarray) else float(state["height"])
+    rpy = np.asarray(state["rpy"], dtype=np.float32)
+    left_arm = np.asarray(state["left_arm"], dtype=np.float32)
+    right_arm = np.asarray(state["right_arm"], dtype=np.float32)
+    left_hand = np.asarray(state["left_hand"], dtype=np.float32)
+    right_hand = np.asarray(state["right_hand"], dtype=np.float32)
+    state_dict = {
+        "vx": np.array([float(state["vx"])], dtype=np.float32),
+        "vy": np.array([float(state["vy"])], dtype=np.float32),
+        "vyaw": np.array([float(state["vyaw"])], dtype=np.float32),
+        "dyaw": np.array([float(state["dyaw"])], dtype=np.float32),
+        "height": np.array([height], dtype=np.float32),
+        "left_arm": left_arm.astype(np.float32),
+        "right_arm": right_arm.astype(np.float32),
+        "left_hand": left_hand.astype(np.float32),
+        "right_hand": right_hand.astype(np.float32),
+        "rpy": rpy.astype(np.float32),
     }
-    # obs = {}
-    # obs["video.ego_view"][:] = frame[None].astype(np.uint8)
-
-    # obs["state.vx"][:] = [[state["vx"]]]
-    # obs["state.vy"][:] = [[state["vy"]]]
-    # obs["state.vyaw"][:] = [[state["vyaw"]]]
-    # obs["state.dyaw"][:] = [[state["dyaw"]]]
-    # obs["state.height"][:] = [[state["height"]]]
-
-    # obs["state.left_arm"][:] = np.asarray(state["left_arm"], dtype=np.float64)[None, :]
-    # obs["state.right_arm"][:] = np.asarray(state["right_arm"], dtype=np.float64)[None, :]
-    # obs["state.right_hand"][:] = np.asarray(state["right_hand"], dtype=np.float64)[None, :]
-    # obs["state.rpy"][:] = np.asarray(state["rpy"], dtype=np.float64)[None, :]
-
-    # obs["annotation.human.task_description"][:] = np.array(
-    #     [TASK_INSTRUCTION], dtype=np.string_
-    # )
-    # print(obs)
+    return frame.astype(np.uint8), state_dict
 
 
-    return obs
+def request_action(image: np.ndarray, state: dict, instruction: str) -> np.ndarray:
+    request = RequestMessage(
+        image={VIDEO_KEY: image},
+        instruction=instruction,
+        history={},
+        state=state,
+        condition={},
+        gt_action=[],
+        dataset_name="gr00t",
+        timestamp="live",
+    )
+    response = requests.post(
+        f"{SERVER_URL}/act",
+        json=request.serialize(),
+        timeout=180.0,
+    )
+    response.raise_for_status()
+    response_msg = ResponseMessage.deserialize(response.json())
+    return np.asarray(response_msg.action, dtype=np.float32)
 
 
 # ---------------- 主逻辑 ----------------
@@ -234,7 +167,7 @@ def main():
     sequence_done_event = Event()
     sequence_done_event.set() 
 
-    # -------- 线程1：请求 OpenVLA，写入 buffer --------
+    # -------- 线程1：请求 GR00T HTTP server，写入 buffer --------
     def action_request_thread():
         for step in range(MAX_STEPS):
             if not running.is_set():
@@ -266,12 +199,12 @@ def main():
                 hand_joints = hand
                 leg_joints = motor[:15]
 
-                # websocket obs payload
+                # HTTP obs payload
                 state = {
                     "vx": master.prev_vx,
                     "vy": master.prev_vy,
                     "vyaw": master.prev_vyaw,
-                    "dyaw": master.prev_dyaw,
+                    "dyaw": master.prev_target_yaw,
                     "rpy": np.array([
                         master.torso_roll,
                         master.torso_pitch,
@@ -280,16 +213,45 @@ def main():
                     "height": np.array([master.torso_height], dtype=np.float32),
                     "left_arm": arm_joints[0:7],
                     "right_arm": arm_joints[7:14],
+                    "left_hand": hand_joints[0:7],
                     "right_hand": hand_joints[7:14],
                 }
-                obs = get_observation(camera, state)
+                image, state_dict = get_observation(camera, state)
+                actions = request_action(image, state_dict, TASK_INSTRUCTION)
 
-                # result = policy.pred_action(image=obs_img, state=state, instruction=TASK_INSTRUCTION)
-                actions = policy.get_action(obs)
-                
-                keys = ["action.vx", "action.vy", "action.vyaw", "action.dyaw", "action.height", "action.rpy", "action.left_arm", "action.right_arm", "action.right_hand"]
-                actions = np.concatenate([actions[k] for k in keys], axis=1)
-                assert actions.shape == (16,29), f"expecting actions.shape = (16, 29), found {actions.shape}"
+                keys = [
+                    "left_hand",
+                    "right_hand",
+                    "left_arm",
+                    "right_arm",
+                    "rpy",
+                    "height",
+                    "vx",
+                    "vy",
+                    "vyaw",
+                    "dyaw",
+                ]
+                dims = {
+                    "vx": 1,
+                    "vy": 1,
+                    "vyaw": 1,
+                    "dyaw": 1,
+                    "height": 1,
+                    "rpy": state_dict["rpy"].shape[-1],
+                    "left_arm": state_dict["left_arm"].shape[-1],
+                    "right_arm": state_dict["right_arm"].shape[-1],
+                    "left_hand": state_dict["left_hand"].shape[-1],
+                    "right_hand": state_dict["right_hand"].shape[-1],
+                }
+                action_dict = {}
+                start = 0
+                for key in keys:
+                    dim = dims[key]
+                    action_dict[key] = actions[:, start : start + dim]
+                    start += dim
+                assert actions.shape == (16, 36), (
+                    f"expecting actions.shape = (16, 36), found {actions.shape}"
+                )
 
                 
 
@@ -304,13 +266,13 @@ def main():
                     pred_action_buffer["actions"] = actions
                     pred_action_buffer["idx"] = 0
 
-                print(f"[VLA] Got websocket sequence: {len(actions)} actions")
+                print(f"[VLA] Got action sequence: {len(actions)} actions")
 
                 # 不允许继续请求，等待 control 执行完
                 sequence_done_event.clear()
 
             except Exception as e:
-                print(f"[VLA] Websocket error: {e}")
+                print(f"[VLA] HTTP error: {e}")
                 time.sleep(0.05)
 
 
@@ -356,33 +318,32 @@ def main():
         arm_cmd = None
         hand_cmd = None
         if not_between_rollouts:
-            if action.shape[0] < 29:
+            if action.shape[0] < 36:
                 print("[CTRL] Invalid action shape:", action.shape)
             else:
-                # 注意这里的切片要和你训练时的 layout 一致
-                vx = action[0]
-                vy = action[1]
+                vx = action[32]
+                vy = action[33]
                 #vx = 0
                 #vy = 0
                 #vyaw = action[2]
                 vyaw_candidates = [-0.5, 0.0]
-                vyaw = min(vyaw_candidates, key=lambda v: abs(v - action[2]))
+                vyaw = min(vyaw_candidates, key=lambda v: abs(v - action[34]))
                # vyaw=0
 
-                dyaw = action[3]
-                rpyh   = action[4:8]
-                arm_cmd = action[8:22]
-                hand_cmd = np.concatenate((np.zeros(7), action[22:29]))
+                dyaw = action[35]
+                rpyh   = action[28:32]
+                arm_cmd = action[14:28]
+                hand_cmd = action[0:14]
 
-                master.torso_roll   = rpyh[1]
-                master.torso_pitch  = rpyh[2]
-                master.torso_yaw    = rpyh[3]
-                master.torso_height = rpyh[0]
+                master.torso_roll   = rpyh[0]
+                master.torso_pitch  = rpyh[1]
+                master.torso_yaw    = rpyh[2]
+                master.torso_height = rpyh[3]
 
                 master.vx = vx
                 master.vy = vy
                 master.vyaw = vyaw
-                master.dyaw = dyaw
+                master.target_yaw = dyaw
 
 
                 master.prev_torso_roll   = master.torso_roll
@@ -393,12 +354,12 @@ def main():
                 master.prev_vx   = master.vx
                 master.prev_vy  = master.vy
                 master.prev_vyaw    = master.vyaw
-                master.prev_dyaw = master.dyaw
+                master.prev_target_yaw = master.target_yaw
 
                 master.prev_arm = arm_cmd
                 master.prev_hand = hand_cmd
 
-                print("VLA output vx, vy, vyaw, dyaw:", vx, vy, vyaw, dyaw)
+                print("VLA output vx, vy, vyaw, dyaw, rpyh:", vx, vy, vyaw, dyaw, rpyh)
         
         if not not_between_rollouts:
             master.torso_roll   = master.prev_torso_roll
@@ -412,7 +373,7 @@ def main():
             master.vx = 0
             master.vy = 0
             master.vyaw = master.prev_vyaw
-            master.dyaw = master.prev_dyaw
+            master.target_yaw = master.target_yaw
         
         # print("torso_yaw:", master.torso_yaw)
         # print("torso_height:", master.torso_height)

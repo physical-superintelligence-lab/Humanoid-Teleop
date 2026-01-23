@@ -172,6 +172,7 @@ class RobotTaskmaster:
         self.prev_vy = 0.0
         self.prev_vyaw = 0.0
         self.prev_dyaw = 0.0
+        self.prev_target_yaw = 0.0
 
         # self.tau_history = []
         # self.tau_log_path = f"tau_log_{int(time.time())}.csv"
@@ -384,6 +385,9 @@ class RobotTaskmaster:
                 dyaw = 0.0
 
             self.dyaw = dyaw
+
+            # if self._in_place_stand_flag:
+            #     self.dyaw = 0.0
 
 
 

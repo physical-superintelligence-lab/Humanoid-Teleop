@@ -1,3 +1,4 @@
+import json
 import torch
 import numpy as np
 
@@ -49,26 +50,26 @@ def convert_numpy_in_dict(data, func):
         return func(data)
     else:
         return data
-
+    
 class Message(object):
     def __init__(self):
         pass
-
+    
     def serialize(self):
         raise NotImplementedError
-
+    
     @classmethod
     def deserialize(cls, response: Dict[str, Any]):
         raise NotImplementedError
 
 class RequestMessage(Message):
-    def __init__(self, image: Dict[str, Any],
-                 instruction: str,
-                 history: Dict[str, Any],
-                 state: Dict[str, Any],
-                 condition: Dict[str, Any],
-                 gt_action: Union[np.ndarray, List],
-                 dataset_name: str,
+    def __init__(self, image: Dict[str, Any], 
+                 instruction: str, 
+                 history: Dict[str, Any], 
+                 state: Dict[str, Any], 
+                 condition: Dict[str, Any], 
+                 gt_action: Union[np.ndarray, List], 
+                 dataset_name: str, 
                  timestamp: str):
         self.image, self.instruction, self.history, self.state, self.gt_action, self.dataset_name, self.timestamp = \
             image, instruction, history, state, gt_action, dataset_name, timestamp
@@ -86,7 +87,7 @@ class RequestMessage(Message):
             "timestamp": self.timestamp
         }
         return convert_numpy_in_dict(msg, numpy_serialize)
-
+    
     @classmethod
     def deserialize(cls, response: Dict[str, Any]):
         response = convert_numpy_in_dict(response, numpy_deserialize)
@@ -106,7 +107,7 @@ class ResponseMessage(Message):
         self.action = action
         self.err = err
         self.traj_image = traj_image
-
+    
     def serialize(self):
         msg = {
             "action": self.action,
@@ -114,10 +115,9 @@ class ResponseMessage(Message):
             "traj_image": self.traj_image
         }
         return convert_numpy_in_dict(msg, numpy_serialize)
-
+    
     @classmethod
     def deserialize(cls, response: Dict[str, Any]):
         response = convert_numpy_in_dict(response, numpy_deserialize)
         return cls(action=response["action"], err=response["err"], traj_image=response["traj_image"])
-
-
+    

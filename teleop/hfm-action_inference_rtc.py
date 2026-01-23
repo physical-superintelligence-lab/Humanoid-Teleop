@@ -16,7 +16,7 @@ from websocket import WebSocketApp
 
 # ---------------- 配置 ----------------
 UNNORM_KEY = "humanoid_dataset/Grab_handle"
-TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
+TASK_INSTRUCTION = "Spray the bowl and wipe it and stack it up."
 
 DATA_DIR = "data/g1_1001/Basic/squat_to_pick_a_box_and_stand_to_put_on_desk/episode_10"
 
@@ -285,6 +285,9 @@ class RTCWebSocketClient:
 def main(server_url):
     # -------- 辅助：根据 action 构造并下发电机命令 --------
     master.reset_yaw_offset = True
+
+    _last_target_yaw = None
+
     def apply_action_from_buffer(last_pd_target):
         # 1) 每个控制周期都先读取机器人当前状态
         current_lr_arm_q, current_lr_arm_dq = master.get_robot_data()
@@ -310,7 +313,13 @@ def main(server_url):
                 vx = action[32]
                 vy = action[33]
                 vyaw = action[34]
-                dyaw = action[35]
+                # dyaw = action[35]
+                target_yaw = action[35]
+
+                vx = 0.35 if vx > 0.25 else 0
+                vy = 0 if abs(vy) < 0.3 else 0.5 * (1 if vy > 0 else -1)
+
+
                 rpyh   = action[28:32]
                 arm_cmd = action[14:28]
                 hand_cmd = action[:14]
@@ -323,7 +332,15 @@ def main(server_url):
                 master.vx = vx
                 master.vy = vy
                 master.vyaw = vyaw
-                master.dyaw = dyaw
+                # nonlocal _last_target_yaw
+                master.target_yaw = target_yaw
+                # if _last_target_yaw is not None:
+                #     target_yaw_diff = target_yaw - _last_target_yaw
+                #     vyaw = target_yaw_diff / (1.0/30)
+                #     master.vyaw = vyaw
+
+                # _last_target_yaw = target_yaw 
+
 
                 master.prev_torso_roll   = master.torso_roll
                 master.prev_torso_pitch  = master.torso_pitch
@@ -333,13 +350,13 @@ def main(server_url):
                 master.prev_vx   = master.vx
                 master.prev_vy  = master.vy
                 master.prev_vyaw    = master.vyaw
-                master.prev_dyaw = master.dyaw
+                master.prev_target_yaw = master.target_yaw
 
                 master.prev_arm = arm_cmd
                 master.prev_hand = hand_cmd
 
                 # print("vx, vy, vyaw, dyaw:", vx, vy, vyaw, dyaw)
-                print("dyaw:", dyaw)
+                print("vyaw, target_yaw:", vyaw, target_yaw)
         
         if not have_vla:
             master.torso_roll   = master.prev_torso_roll
@@ -347,22 +364,24 @@ def main(server_url):
             master.torso_yaw    = master.prev_torso_yaw
             master.torso_height = master.prev_torso_height
 
+            master.vx = master.prev_vx
+            # master.vx = 0
+            master.vy = 0
+            # master.dyaw = 0
+            # master.vyaw = 0
             # master.vx = master.prev_vx
             # master.vy = master.prev_vy
-            master.vx = 0
-            master.vy = 0
             master.vyaw = master.prev_vyaw
-            master.dyaw = master.prev_dyaw
-
-            arm_cmd = master.prev_arm
-            hand_cmd = master.prev_hand
+            # master.vyaw = 0
+            # master.dyaw = master.prev_dyaw
+            master.target_yaw = master.prev_target_yaw
         
         # print("torso_yaw:", master.torso_yaw)
         # print("torso_height:", master.torso_height)
 
 
         # 4) 无论有没有新 action，**都要跑 IK + whole-body control**
-        master.get_ik_observation()
+        master.get_ik_observation(record=False)
 
 
         pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(

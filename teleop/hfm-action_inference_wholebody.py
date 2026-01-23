@@ -17,10 +17,17 @@ import zmq
 URL = "http://localhost:8014/act"  # 或 8080
 UNNORM_KEY = "humanoid_dataset/Grab_handle"
 # TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
-# TASK_INSTRUCTION = "Put toys into box and lift it and turn and put on the chair."
-TASK_INSTRUCTION = "Pick the dumpling toy, turn around, walk forward, squat, and put the toy on the chair."
+TASK_INSTRUCTION = "Put toys into box and lift it and turn and put on the chair."
+# TASK_INSTRUCTION = "Pick the dumpling toy, turn around, walk forward, squat, and put the toy on the chair."
 
-# DATA_DIR = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10"
+
+
+DATA_DIR = "data/g1_1001/Basic/Pick_toys_into_box_and_lift_and_turn_and_put_on_the_chair_new/episode_18/"
+merged_file_path = "data/g1_1001/Basic/Pick_toys_into_box_and_lift_and_turn_and_put_on_the_chair_new/episode_18/data.json"
+with open(merged_file_path, "r") as f:
+    data_list = json.load(f)
+
+
 
 FREQ_VLA = 30      # InternVLA 请求频率
 FREQ_CTRL = 60    # 控制频率 (Hz)
@@ -56,7 +63,16 @@ def get_observation_with_gt(idx):
     # frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = frame.astype(np.uint8)
-    return {"image": img}
+    arm_poseList = data_list[idx]["states"]["arm_state"]
+    hand_poseList = data_list[idx]["states"]["hand_state"]
+    img_obs = {
+        "video": frame,
+    }
+    state_obs = {
+        "arm_joints": np.array(arm_poseList),
+        "hand_joints": np.array(hand_poseList),
+    }
+    return img_obs, state_obs
 
 
 def get_observation(camera, state):
@@ -151,6 +167,7 @@ def main():
 
                 # obs = get_observation_with_gt(step * 16)
                 img_obs, state_obs = get_observation(camera, state)
+                # img_obs, state_obs = get_observation_with_gt(step * 16)
                 payload = {
                     "image": img_obs,
                     "state": state_obs,
@@ -230,9 +247,11 @@ def main():
                 vx = action[32]
                 vy = action[33]
                 vyaw = action[34]
-                dyaw = action[35]
+                # dyaw = action[35]
+                target_yaw = action[35]
 
-                vx = 0.35 if vx > 0.1 else 0
+                vx = 0.35 if vx > 0.25 else 0
+                vy = 0 if abs(vy) < 0.3 else 0.5 * (1 if vy > 0 else -1)
 
 
                 rpyh   = action[28:32]
@@ -247,7 +266,8 @@ def main():
                 master.vx = vx
                 master.vy = vy
                 master.vyaw = vyaw
-                master.dyaw = dyaw
+                # master.dyaw = dyaw
+                master.target_yaw = target_yaw
 
                 master.prev_torso_roll   = master.torso_roll
                 master.prev_torso_pitch  = master.torso_pitch
@@ -257,7 +277,8 @@ def main():
                 master.prev_vx   = master.vx
                 master.prev_vy  = master.vy
                 master.prev_vyaw    = master.vyaw
-                master.prev_dyaw = master.dyaw
+                # master.prev_dyaw = master.dyaw
+                master.prev_target_yaw = master.target_yaw
 
                 master.prev_arm = arm_cmd
                 master.prev_hand = hand_cmd
@@ -275,7 +296,8 @@ def main():
             arm_cmd = master.prev_arm
             hand_cmd = master.prev_hand
 
-            master.vx = 0
+            master.vx = master.prev_vx
+            # master.vx = 0
             master.vy = 0
             # master.dyaw = 0
             # master.vyaw = 0
@@ -283,16 +305,17 @@ def main():
             # master.vy = master.prev_vy
             master.vyaw = master.prev_vyaw
             # master.vyaw = 0
-            master.dyaw = master.prev_dyaw
+            # master.dyaw = master.prev_dyaw
+            master.target_yaw = master.prev_target_yaw
         
         # print("torso_yaw:", master.torso_yaw)
         # print("torso_height:", master.torso_height)
-        print("dyaw:", master.dyaw)
+        # print("dyaw:", master.dyaw)
 
 
 
         # 4) 无论有没有新 action，**都要跑 IK + whole-body control**
-        master.get_ik_observation()
+        master.get_ik_observation(record=False)
 
 
         pd_target, pd_tauff, raw_action = master.body_ik.solve_whole_body_ik(

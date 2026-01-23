@@ -53,7 +53,7 @@ def quatToEuler(quat):
 
 
 if __name__ == "__main__":
-    merged_file_path = "data/g1_1001/Basic/Test/episode_18/data.json"
+    merged_file_path = "data/g1_1001/Basic/Pick_toys_into_box_and_lift_and_turn_and_put_on_the_chair_new/episode_70/data.json"
     with open(merged_file_path, "r") as f:
         data_list = json.load(f)
 
@@ -90,7 +90,7 @@ if __name__ == "__main__":
 
         for i in range(0, len(data_list) - 1):
             arm_poseList = data_list[i]["states"]["arm_state"]
-            #arm_poseList = data_list[i]["actions"]["sol_q"][-14:]
+            # arm_poseList = data_list[i]["actions"]["sol_q"][-14:]
             # rpy = data_list[i]["states"]["imu"]["rpy"]
             # quat = data_list[i]["states"]["imu"]["quaternion"]
             # rpy = quatToEuler(quat)
@@ -105,7 +105,7 @@ if __name__ == "__main__":
             target_yaw = data_list[i]["actions"]["target_yaw"]
 
             hand_poseList = data_list[i]["states"]["hand_state"]
-            #hand_poseList =  data_list[i]["actions"]["left_angles"] + data_list[i]["actions"]["right_angles"]
+            # hand_poseList =  data_list[i]["actions"]["left_angles"] + data_list[i]["actions"]["right_angles"]
 
             for i in range(repeat):
                 start_time = time.time()
