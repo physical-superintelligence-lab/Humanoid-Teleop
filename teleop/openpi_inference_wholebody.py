@@ -49,7 +49,13 @@ policy = _websocket_client_policy.WebsocketClientPolicy(
 
 logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-TASK_INSTRUCTION = "g1/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water"
+# TASK_INSTRUCTION = "g1/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water"
+# TASK_INSTRUCTION = "g1-fullbody/Pick_toys_into_box_and_lift_and_turn_and_put_on_the_chair_new"
+# TASK_INSTRUCTION = "g1/Pick_bottle_and_turn_and_pour_into_cup"
+#TASK_INSTRUCTION = "g1/Pull_the_tray_out_of_chips_can_and_throw_the_can_into_trash_bin"
+TASK_INSTRUCTION = "g1/Spray_the_bowl_and_wipe_it_and_stack_it_up"
+# TASK_INSTRUCTION = "g1/Put_dumpling_into_blanket_and_turn_around_and_pass_to_human"
+# TASK_INSTRUCTION = "g1-fullbody/Hold_lunch_bag_with_both_hands_and_squat_to_put_on_the_coffee_table"
 
 DATA_DIR = "data/g1_1001/Basic/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water/episode_18/"
 merged_file_path = "data/g1_1001/Basic/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water/episode_18/data.json"
@@ -282,8 +288,8 @@ def main():
                 # dyaw = action[35]
                 target_yaw = action[35]
 
-                # vx = 0.35 if vx > 0.25 else 0
-                # vy = 0 if abs(vy) < 0.3 else 0.5 * (1 if vy > 0 else -1)
+                vx = 0.35 if vx > 0.25 else 0
+                vy = 0 if abs(vy) < 0.3 else 0.5 * (1 if vy > 0 else -1)
 
 
                 rpyh   = action[28:32]

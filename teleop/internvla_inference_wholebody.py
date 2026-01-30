@@ -16,9 +16,10 @@ import zmq
 # ---------------- 配置 ----------------
 URL = "http://localhost:8014/act"  # 或 8080
 UNNORM_KEY = "humanoid_dataset/Grab_handle"
-TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
+TASK_INSTRUCTION = "Pick bottle and turn and pour into cup"
 
 # DATA_DIR = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10"
+DATA_DIR = "/home/xiawei/hongyi/Unitree_Robotics/Humanoid-Teleop/teleop/data/g1_1001/Basic/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water/episode_2"
 
 FREQ_VLA = 30      # InternVLA 请求频率
 FREQ_CTRL = 60    # 控制频率 (Hz)
@@ -59,12 +60,12 @@ def get_observation_with_gt(idx):
 
 def get_observation(camera):
     frame = camera.get_frame()
-    frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
+    # frame = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = frame.astype(np.uint8)
 
     obs = {
-        "image": frame,
+        "image": img,
     }
     return obs
 
@@ -125,7 +126,7 @@ def main():
                 resp = s.post(URL, json=payload)
                 resp.raise_for_status()
                 actions = np.array(resp.json()["action"], dtype=float)
-                if len(actions.shape) != 2 or actions.shape[1] < 32:
+                if len(actions.shape) != 2 or actions.shape[1] < 36:
                     print("[VLA] invalid action seq:", actions.shape)
                     continue
 

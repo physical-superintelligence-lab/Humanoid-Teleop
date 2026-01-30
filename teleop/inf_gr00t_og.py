@@ -39,7 +39,7 @@ policy = PolicyClient(host=args.host, port=args.port)
 VIDEO_KEY = "rs_view"
 
 #TASK_INSTRUCTION = "whole-body/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair"
-TASK_INSTRUCTION = "Remove the cap turn on the faucet and fill the bottle with water"
+TASK_INSTRUCTION = "Push cart grasp and place grapes on plate."
 
 DATA_DIR = "data/g1_1001/Basic/pick_dumpling_toy_and_turn_and_walk_and_squat_to_put_on_chair/episode_10"
 
@@ -454,7 +454,7 @@ def main():
         stabilize_thread.start()
         master.episode_kill_event.set()
         print("[MAIN] Initialize with standing pose...")
-        time.sleep(20)
+        time.sleep(30)
         master.episode_kill_event.clear()  # 停止站立控制，只留下面的控制线程写电机
 
         master.reset_yaw_offset = True

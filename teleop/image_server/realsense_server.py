@@ -1,101 +1,95 @@
 import datetime
 import threading
-import time  # for sleep control
-
+import time
 import cv2
 import numpy as np
 import pyrealsense2 as rs
 import zmq
 
-# Shared variables for the latest frames
+# Shared variables
 latest_rgb_bytes = None
 latest_ir_bytes = None
-latest_depth_bytes = None
+# Pre-generate a fake depth buffer (zeros) to maintain pipeline compatibility
+# 640x480 uint16 = 614,400 bytes
+FAKE_DEPTH_BYTES = np.zeros((480, 640), dtype=np.uint16).tobytes()
 frame_lock = threading.Lock()
 
-
 def frame_capture_thread():
+    global latest_rgb_bytes, latest_ir_bytes
+    
     pipeline = rs.pipeline()
     config = rs.config()
+    
+    # Enable ONLY RGB and IR (to fit USB 2.0 bandwidth)
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
     config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
     config.enable_stream(rs.stream.infrared, 2, 640, 480, rs.format.y8, 30)
-    pipeline.start(config)
 
-    global latest_rgb_bytes, latest_ir_bytes, latest_depth_bytes
+    try:
+        pipeline.start(config)
+        print("RealSense: RGB + IR active. Depth is MOCKED (zeros) for USB 2.0 compatibility.")
+    except Exception as e:
+        print(f"Failed to start RealSense: {e}")
+        return
 
     while True:
-        frames = pipeline.wait_for_frames()
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
-        ir_left_frame = frames.get_infrared_frame(1)
-        ir_right_frame = frames.get_infrared_frame(2)
+        try:
+            frames = pipeline.wait_for_frames()
+            color_frame = frames.get_color_frame()
+            ir_left_frame = frames.get_infrared_frame(1)
+            ir_right_frame = frames.get_infrared_frame(2)
 
-        if not (depth_frame and color_frame and ir_left_frame and ir_right_frame):
-            continue
+            if not (color_frame and ir_left_frame and ir_right_frame):
+                continue
 
-        # Convert frames to NumPy arrays
-        color_image = np.asanyarray(color_frame.get_data())
-        depth_array = np.asanyarray(depth_frame.get_data()).astype(np.uint16)
-        ir_left_image = np.asanyarray(ir_left_frame.get_data())
-        ir_right_image = np.asanyarray(ir_right_frame.get_data())
-
-        # Convert single-channel IR images to 3-channel images for consistency
-        ir_left_image = cv2.cvtColor(ir_left_image, cv2.COLOR_GRAY2BGR)
-        ir_right_image = cv2.cvtColor(ir_right_image, cv2.COLOR_GRAY2BGR)
-
-        # Combine the two IR images horizontally
-        ir_combined = np.hstack((ir_left_image, ir_right_image))
-
-        ret_rgb, encoded_rgb = cv2.imencode(".jpg", color_image)
-        ret_ir, encoded_ir = cv2.imencode(".jpg", ir_combined)
-        if ret_rgb and ret_ir:
-            rgb_bytes = encoded_rgb.tobytes()
-            ir_bytes = encoded_ir.tobytes()
-            depth_bytes = depth_array.tobytes()
+            # Process Color
+            color_image = np.asanyarray(color_frame.get_data())
+            # Use JPEG quality 80 for USB 2.0 stability
+            _, encoded_rgb = cv2.imencode(".jpg", color_image, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            
+            # Process IR
+            ir_l = np.asanyarray(ir_left_frame.get_data())
+            ir_r = np.asanyarray(ir_right_frame.get_data())
+            # Convert to BGR to match your original processing logic
+            ir_l_bgr = cv2.cvtColor(ir_l, cv2.COLOR_GRAY2BGR)
+            ir_r_bgr = cv2.cvtColor(ir_r, cv2.COLOR_GRAY2BGR)
+            ir_combined = np.hstack((ir_l_bgr, ir_r_bgr))
+            _, encoded_ir = cv2.imencode(".jpg", ir_combined, [cv2.IMWRITE_JPEG_QUALITY, 60])
 
             with frame_lock:
-                latest_rgb_bytes = rgb_bytes
-                latest_ir_bytes = ir_bytes
-                latest_depth_bytes = depth_bytes
+                latest_rgb_bytes = encoded_rgb.tobytes()
+                latest_ir_bytes = encoded_ir.tobytes()
 
+        except Exception as e:
+            print(f"Capture error: {e}")
 
 def start_server():
-    # Start the frame capture thread
-    capture_thread = threading.Thread(target=frame_capture_thread, daemon=True)
-    capture_thread.start()
+    threading.Thread(target=frame_capture_thread, daemon=True).start()
 
     context = zmq.Context()
-    # Create a REP socket for request-response
     socket = context.socket(zmq.REP)
-    socket.bind("tcp://192.168.123.162:5556")
+    socket.bind("tcp://192.168.123.164:5556")
     print("Server started, waiting for client requests...")
 
     try:
         while True:
-            # Wait for a client request
-            request = socket.recv()  # blocks until a request is received
-            print(
-                f"Received request: {request.decode('utf-8')} at {datetime.datetime.now()}"
-            )
-
+            cur = time.time()
+            request = socket.recv()
+            print(f"req time: {time.time() - cur}")
+            cur = time.time()
             with frame_lock:
-                rgb_bytes = latest_rgb_bytes
-                ir_bytes = latest_ir_bytes
-                depth_bytes = latest_depth_bytes
+                rgb = latest_rgb_bytes
+                ir = latest_ir_bytes
 
-            if rgb_bytes is None or ir_bytes is None or depth_bytes is None:
-                print("No frames available yet, sending empty response.")
-                socket.send(b"")  # or send an error message if desired
+            if rgb is None or ir is None:
+                socket.send(b"")
             else:
-                # Respond with the latest frames as a multipart message
-                socket.send_multipart([rgb_bytes, ir_bytes, depth_bytes])
-                print(f"Sent frame at {datetime.datetime.now()}")
+                # Send RGB, IR, and the FAKE depth zeros
+                socket.send_multipart([rgb, ir, FAKE_DEPTH_BYTES])
+                print(f"send time: {time.time() - cur}")
     finally:
         socket.close()
         context.term()
-
 
 if __name__ == "__main__":
     start_server()

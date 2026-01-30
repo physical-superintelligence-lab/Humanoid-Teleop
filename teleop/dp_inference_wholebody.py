@@ -14,7 +14,7 @@ from robot_control.compute_tau import GetTauer
 import zmq
 
 # ---------------- 配置 ----------------
-URL = "http://localhost:8014/act"  # 或 8080
+URL = "http://localhost:22081/act"  # 或 8080
 UNNORM_KEY = "humanoid_dataset/Grab_handle"
 # TASK_INSTRUCTION = "Walk towards the purple front door and then stop to grab the black handle."
 TASK_INSTRUCTION = "Put toys into box and lift it and turn and put on the chair."
@@ -22,8 +22,8 @@ TASK_INSTRUCTION = "Put toys into box and lift it and turn and put on the chair.
 
 
 
-DATA_DIR = "data/g1_1001/Basic/Pick_toys_into_box_and_lift_and_turn_and_put_on_the_chair_new/episode_18/"
-merged_file_path = "data/g1_1001/Basic/Pick_toys_into_box_and_lift_and_turn_and_put_on_the_chair_new/episode_18/data.json"
+DATA_DIR = "/home/xiawei/hongyi/Unitree_Robotics/Humanoid-Teleop/teleop/data/g1_1001/Basic/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water/episode_2"
+merged_file_path = "/home/xiawei/hongyi/Unitree_Robotics/Humanoid-Teleop/teleop/data/g1_1001/Basic/Remove_the_cap_turn_on_the_faucet_and_fill_the_bottle_with_water/episode_2/data.json"
 with open(merged_file_path, "r") as f:
     data_list = json.load(f)
 
@@ -167,7 +167,7 @@ def main():
 
                 # obs = get_observation_with_gt(step * 16)
                 img_obs, state_obs = get_observation(camera, state)
-                # img_obs, state_obs = get_observation_with_gt(step * 16)
+                # img_obs, state_obs = get_observation_with_gt(step * 8)
                 payload = {
                     "image": img_obs,
                     "state": state_obs,
@@ -181,7 +181,6 @@ def main():
                 resp = s.post(URL, json=payload)
                 resp.raise_for_status()
                 actions = np.array(resp.json()["action"], dtype=float)
-                # actions = actions[:16]
                 if len(actions.shape) != 2 or actions.shape[1] != 36:
                     print("[VLA] invalid action seq:", actions.shape)
                     continue

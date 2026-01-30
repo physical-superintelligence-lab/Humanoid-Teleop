@@ -26,7 +26,7 @@ sys.path.append(parent_dir)
 # TELEOPERATOR_HEIGHT = 1.74
 # TELEOPERATOR_HEIGHT = 1.40
 # TELEOPERATOR_HEIGHT = 1.95
-TELEOPERATOR_HEIGHT = 1.45
+TELEOPERATOR_HEIGHT = 1.95
 height_offset = 1.88 - TELEOPERATOR_HEIGHT
 
 from constants_vuer import (
