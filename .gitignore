@@ -17,3 +17,5 @@ teleop/zipped
 teleop/Isaac-GR00T
 .direnv
 unitree_sdk2_python/
+teleop/his
+*.his
